@@ -7,6 +7,7 @@ import type { MailboxResult } from "../mailbox/mailbox-api.client";
 import type { MatchContext } from "../mailbox/mailbox-match.service";
 import { MailboxTokenService } from "../mailbox/mailbox-token.service";
 import {
+	decodeEntities,
 	normaliseMessageId,
 	rootMessageIdFrom,
 	stripHtml,
@@ -275,7 +276,12 @@ export class ZohoMailSyncService {
 		const from = senderOf(summary);
 		if (!from) return { outcome: "skip" };
 
-		const sentAtMillis = summary.sentDateInGMT ?? summary.receivedTime;
+		// `sentDateInGMT` is not GMT. Zoho returns it shifted by the mailbox's
+		// own timezone, so it reads hours ahead of `receivedTime` on messages
+		// that were delivered within a second of being sent — which would file
+		// every synced mail in the future and reorder threads. `receivedTime`
+		// agrees with the message's real clock, so it is preferred.
+		const sentAtMillis = summary.receivedTime ?? summary.sentDateInGMT;
 		if (sentAtMillis === undefined) return { outcome: "skip" };
 
 		const headers = await this.zoho.messageHeaders(
@@ -306,8 +312,8 @@ export class ZohoMailSyncService {
 		}
 
 		const recipients = [
-			...named(parseAddressList(summary.toAddress), "to"),
-			...named(parseAddressList(summary.ccAddress), "cc"),
+			...named(parseAddressList(decodeAddressLine(summary.toAddress)), "to"),
+			...named(parseAddressList(decodeAddressLine(summary.ccAddress)), "cc"),
 		];
 
 		return {
@@ -315,7 +321,7 @@ export class ZohoMailSyncService {
 			data: {
 				rfcMessageId: normaliseMessageId(rfcMessageId),
 				rootId: this.rootIdOf(headers.data, rfcMessageId, summary),
-				subject: summary.subject?.trim() || null,
+				subject: decodeEntities(summary.subject ?? "").trim() || null,
 				from,
 				recipients,
 				body: stripQuotedHistory(stripHtml(content.data.content)),
@@ -410,12 +416,27 @@ function addressOf(account: ZohoAccount | undefined): string | null {
  * have to be recombined before the shared address parser sees them.
  */
 function senderOf(summary: ZohoMessageSummary) {
-	const email = summary.fromAddress?.trim();
+	const email = decodeEntities(summary.fromAddress ?? "").trim();
 	if (!email) return null;
 
-	const name = summary.sender?.trim();
+	const name = decodeEntities(summary.sender ?? "")
+		.trim()
+		.replace(/"/g, "");
 
 	return parseAddress(name ? `"${name}" <${email}>` : email);
+}
+
+/**
+ * Zoho fills an empty recipient header with the literal string
+ * "Not Provided" rather than omitting it, so it is discarded before parsing.
+ */
+function decodeAddressLine(value: string | null | undefined): string | null {
+	if (!value) return null;
+
+	const decoded = decodeEntities(value).trim();
+	if (!decoded || decoded === "Not Provided") return null;
+
+	return decoded;
 }
 
 function named(

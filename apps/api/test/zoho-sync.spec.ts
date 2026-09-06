@@ -241,6 +241,98 @@ describe("the first Zoho tick", () => {
 	});
 });
 
+describe("what Zoho actually puts in a message summary", () => {
+	// Every one of these is a shape observed on a real mailbox, not a guess.
+	// Zoho HTML-escapes the recipient and subject lines, writes the literal
+	// string "Not Provided" for an absent Cc, and returns a `sentDateInGMT`
+	// that is not in GMT.
+	it("reads a recipient out of an HTML-escaped address line", async () => {
+		const kit = harness({
+			pages: [
+				[
+					summary({
+						toAddress: "&lt;meghan@sergeantseptic.com&gt;",
+						ccAddress: "Not Provided",
+					}),
+				],
+			],
+		});
+
+		await kit.service.sync(row);
+
+		expect(kit.stored[0]?.recipients).toEqual([
+			{ email: "meghan@sergeantseptic.com", name: null, kind: "to" },
+		]);
+	});
+
+	it("keeps the display name on an escaped address line", async () => {
+		const kit = harness({
+			pages: [
+				[
+					summary({
+						toAddress:
+							"&quot;Danio — Elite Integration&quot;&lt;danio@example.com&gt;",
+					}),
+				],
+			],
+		});
+
+		await kit.service.sync(row);
+
+		expect(kit.stored[0]?.recipients).toEqual([
+			{
+				email: "danio@example.com",
+				name: "Danio — Elite Integration",
+				kind: "to",
+			},
+		]);
+	});
+
+	it("unescapes the subject and the sender's name", async () => {
+		const kit = harness({
+			pages: [
+				[
+					summary({
+						subject: "Re: I rebuilt Mesa Bloom Market&#39;s website",
+						sender: "Ty &amp; Co",
+					}),
+				],
+			],
+		});
+
+		await kit.service.sync(row);
+
+		expect(kit.stored[0]?.subject).toBe(
+			"Re: I rebuilt Mesa Bloom Market's website",
+		);
+		expect(kit.stored[0]?.from.name).toBe("Ty & Co");
+	});
+
+	it("times a message by when it arrived, not by Zoho's mislabelled clock", async () => {
+		// `sentDateInGMT` came back exactly seven hours ahead of `receivedTime`
+		// on every message in the pilot mailbox, including automated mail
+		// delivered a second after it was sent. Trusting it files mail in the
+		// future.
+		const arrived = CURSOR + 60_000;
+		const kit = harness({
+			pages: [
+				[
+					summary({
+						receivedTime: arrived,
+						sentDateInGMT: arrived + 7 * 60 * 60 * 1000,
+					}),
+				],
+			],
+		});
+
+		await kit.service.sync(row);
+
+		expect(kit.stored[0]?.sentAt.toISOString()).toBe(
+			new Date(arrived).toISOString(),
+		);
+	});
+});
+
 describe("reading new mail", () => {
 	it("stores a message the CRM has not seen and keeps a link back to Zoho", async () => {
 		const kit = harness({ pages: [[summary()]] });
