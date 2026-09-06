@@ -83,6 +83,22 @@ export type Evidence = {
 	sourceUrl?: string;
 };
 
+/**
+ * Evidence that comes from our own records — our mailbox, our calendar — and
+ * so is authoritative without an external page. Everything else names a page
+ * somewhere, and that page has to be one the session actually fetched.
+ */
+const INTERNAL: ReadonlySet<EvidenceKind> = new Set<EvidenceKind>([
+	"crm.thread-reply",
+	"crm.signature-block",
+	"crm.meeting-attendance",
+	"contradiction",
+]);
+
+export function needsFetchedSource(kind: EvidenceKind): boolean {
+	return !INTERNAL.has(kind);
+}
+
 export type Scored = {
 	score: number;
 	band: FactBand | null;

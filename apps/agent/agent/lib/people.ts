@@ -6,6 +6,7 @@ import type {
 import { z } from "zod";
 import { CONTEXT } from "./context-config";
 import { contextDev, describe } from "./context-dev";
+import { recordFetchedSources } from "./sources";
 
 export type EnrichedMatch = PersonEnrichResponse["match"];
 
@@ -202,7 +203,12 @@ export function matchFrom(match: EnrichedMatch): PersonMatch {
 		};
 	}
 
-	return { outcome: "found", person: toPerson(candidate.data.person) };
+	const person = toPerson(candidate.data.person);
+
+	// The vendor resolved a real profile, so those pages may now be cited.
+	recordFetchedSources([person.profileUrl, ...person.socialUrls]);
+
+	return { outcome: "found", person };
 }
 
 function toPerson(raw: z.infer<typeof personShape>): Person {

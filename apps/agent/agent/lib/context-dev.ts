@@ -3,6 +3,7 @@ import { APIError } from "context.dev/core/error";
 import { z } from "zod";
 import { contextDevKey } from "./capabilities";
 import { CONTEXT } from "./context-config";
+import { recordFetchedSource } from "./sources";
 
 export type JsonSchema = {
 	type?:
@@ -179,6 +180,10 @@ export async function extract(
 			maxPages: 8,
 			timeoutMS: CONTEXT.timeoutMs,
 		});
+
+		// The page was genuinely retrieved: it may now be cited on a write.
+		recordFetchedSource(url);
+
 		return { outcome: "found", data: response.data };
 	} catch (error) {
 		return { outcome: "failed", reason: describe(error) };
@@ -220,6 +225,13 @@ export async function search(
 					: null,
 		}));
 
+		// Only a result whose page body actually came back was read. A hit with
+		// nothing but a title is a pointer, not a source, and must not become
+		// citable — the instructions say as much and the runtime now holds it.
+		for (const result of results) {
+			if (result.markdown) recordFetchedSource(result.url);
+		}
+
 		return { outcome: "found", results };
 	} catch (error) {
 		return { outcome: "failed", reason: describe(error) };
@@ -239,6 +251,9 @@ async function lookup(
 		const brand = response.brand as Brand | undefined;
 
 		if (!brand) return { outcome: "skipped", reason: "No brand matched." };
+
+		// The vendor resolved this domain, which means it read the site.
+		recordFetchedSource(brand.domain);
 
 		return { outcome: "found", brand, raw: response };
 	} catch (error) {
