@@ -41,3 +41,6 @@ export const ZOHO_EXCLUDED_FOLDER_TYPES = [
  * collide with a real RFC message id.
  */
 export const ZOHO_THREAD_ROOT_PREFIX = "zoho-thread:";
+
+/** DI token for the resolved data-centre endpoints, or null when unconfigured. */
+export const ZOHO_ENDPOINTS = "ZOHO_ENDPOINTS";

@@ -1,12 +1,16 @@
-import { zohoConfig } from "@crm/auth";
+import type { ZohoEndpoints } from "@crm/auth";
 import { schemas } from "@crm/validation";
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import type { ZodType } from "zod";
 import {
 	MailboxApiClient,
 	type MailboxResult,
 } from "../mailbox/mailbox-api.client";
-import { ZOHO_AUTH_SCHEME, ZOHO_PAGE_SIZE } from "./zoho.constants";
+import {
+	ZOHO_AUTH_SCHEME,
+	ZOHO_ENDPOINTS,
+	ZOHO_PAGE_SIZE,
+} from "./zoho.constants";
 
 export type ZohoAccount = ReturnType<typeof schemas.zoho.account.parse>;
 export type ZohoFolder = ReturnType<typeof schemas.zoho.folder.parse>;
@@ -15,13 +19,11 @@ export type ZohoMessageSummary = ReturnType<
 >;
 
 export type ZohoMessageBody = {
-	messageId: string;
 	/** HTML, as Zoho stores it. The caller strips it. */
 	content: string;
 };
 
 export type ZohoHeaders = {
-	messageId: string;
 	/** Header names lower-cased, so lookups do not have to guess the casing. */
 	values: Map<string, string[]>;
 };
@@ -42,17 +44,20 @@ export type ZohoHeaders = {
  */
 @Injectable()
 export class ZohoMailClient {
-	constructor(private readonly api: MailboxApiClient) {}
+	constructor(
+		private readonly api: MailboxApiClient,
+		@Inject(ZOHO_ENDPOINTS)
+		private readonly endpoints: ZohoEndpoints | null,
+	) {}
 
 	private base(): string {
-		const config = zohoConfig();
-		if (!config) {
+		if (!this.endpoints) {
 			throw new Error(
 				"Zoho is not configured: set ZOHO_CLIENT_ID and ZOHO_CLIENT_SECRET.",
 			);
 		}
 
-		return config.endpoints.mailApiBase;
+		return this.endpoints.mailApiBase;
 	}
 
 	/**
@@ -60,10 +65,9 @@ export class ZohoMailClient {
 	 * `webLink` field of its own, so this is assembled from the ids we hold.
 	 */
 	messageUrl(folderId: string, messageId: string): string | null {
-		const config = zohoConfig();
-		if (!config) return null;
+		if (!this.endpoints) return null;
 
-		return `${config.endpoints.mailWebBase}/zm/#mail/folder/${folderId}/p/${messageId}`;
+		return `${this.endpoints.mailWebBase}/zm/#mail/folder/${folderId}/p/${messageId}`;
 	}
 
 	async accounts(accessToken: string): Promise<MailboxResult<ZohoAccount[]>> {
@@ -127,10 +131,7 @@ export class ZohoMailClient {
 			values.set(name.toLowerCase(), entries);
 		}
 
-		return {
-			outcome: "ok",
-			data: { messageId: result.data.messageId, values },
-		};
+		return { outcome: "ok", data: { values } };
 	}
 
 	async messageContent(
@@ -146,13 +147,7 @@ export class ZohoMailClient {
 		);
 		if (result.outcome !== "ok") return result;
 
-		return {
-			outcome: "ok",
-			data: {
-				messageId: result.data.messageId,
-				content: result.data.content ?? "",
-			},
-		};
+		return { outcome: "ok", data: { content: result.data.content ?? "" } };
 	}
 
 	private messagePath(

@@ -111,8 +111,12 @@ export type ZohoMessageSummary = z.infer<typeof messageSummary>;
 
 export const messageList = z.array(messageSummary);
 
+// `messageId` is deliberately absent from this shape and the one below. Zoho
+// returns it here as a bare JSON number — `1710915488416100000` — which is past
+// `Number.MAX_SAFE_INTEGER`, so `JSON.parse` has already rounded it by the time
+// any schema sees it. The list endpoint returns the same id as a string, and
+// that is the copy every caller uses.
 export const messageContent = z.object({
-	messageId: id,
 	content: z.string().optional(),
 	blockContent: z.string().optional(),
 });
@@ -122,7 +126,6 @@ export type ZohoMessageContent = z.infer<typeof messageContent>;
 // `?raw=false` returns headers as a name -> values map. Header names keep the
 // casing the sending server used, so the reader lower-cases before lookup.
 export const messageHeaders = z.object({
-	messageId: id,
 	headerContent: z.record(z.string(), z.array(z.string())),
 });
 
