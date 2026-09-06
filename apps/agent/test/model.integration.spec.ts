@@ -45,7 +45,22 @@ describe("the configured model", () => {
 		expect(setting.id).toBe(DEFAULT_AGENT_MODEL.id);
 		expect(setting.isDefault).toBe(true);
 
+		// Nothing chosen means the agent's compiled fallback, which is a direct
+		// Anthropic model. `selectedModel` returning null is what leaves it there.
+		expect(setting.routing).toBe("direct");
 		expect(await selectedModel()).toBeNull();
+	});
+
+	it("says a chosen model is reached through the gateway", async () => {
+		await writeAgentModel(db, {
+			id: "zai/glm-5.2-fast",
+			contextWindowTokens: 1_000_000,
+		});
+
+		const setting = await readAgentModel(db);
+
+		expect(setting.isDefault).toBe(false);
+		expect(setting.routing).toBe("gateway");
 	});
 
 	it("returns the chosen model with its own context window", async () => {

@@ -87,7 +87,8 @@ export function AgentModel() {
 
 	if (!settings.data) return null;
 
-	const { selectedId, effectiveId, defaultId, effective } = settings.data;
+	const { selectedId, effectiveId, defaultId, effective, routing } =
+		settings.data;
 	const models = catalog.data?.models ?? [];
 	const unavailable = catalog.data !== undefined && !catalog.data.available;
 
@@ -111,7 +112,9 @@ export function AgentModel() {
 			<CardHeader>
 				<CardTitle>Research agent</CardTitle>
 				<CardDescription>
-					The model the agent thinks with, routed through the Vercel AI Gateway.
+					The model the agent thinks with. The default is called directly at
+					Anthropic; every other model here is routed through the Vercel AI
+					Gateway.
 				</CardDescription>
 			</CardHeader>
 
@@ -180,6 +183,12 @@ export function AgentModel() {
 									priceHint(effective) ? ` · ${priceHint(effective)}` : ""
 								}`
 							: effectiveId}
+				</p>
+
+				<p className="text-muted-foreground text-xs">
+					{routing === "direct"
+						? "Called directly at Anthropic, using this install's ANTHROPIC_API_KEY."
+						: "Routed through the Vercel AI Gateway, using this install's AI_GATEWAY_API_KEY."}
 				</p>
 			</CardContent>
 		</Card>

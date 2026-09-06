@@ -42,13 +42,18 @@ export class SettingsService {
 			selectedId: model.isDefault ? null : model.id,
 			effectiveId: model.id,
 			defaultId: DEFAULT_AGENT_MODEL.id,
+			routing: model.routing,
 			effective: await this.catalog.find(model.id),
 			updatedAt: row?.updatedAt.toISOString() ?? null,
 		};
 	}
 
 	async setAgentModel(modelId: string | null): Promise<AgentModelSettings> {
-		if (modelId === null) {
+		// The default model is the same model the gateway lists under this id,
+		// but we call Anthropic directly for it. Storing it as a selection would
+		// quietly move the same-looking choice onto the gateway — and onto a
+		// gateway key this install does not have. Picking it means the default.
+		if (modelId === null || modelId === DEFAULT_AGENT_MODEL.id) {
 			await writeAgentModel(this.db, null);
 			this.logger.log({ message: "Agent model reset to the default" });
 			return this.agentModel();

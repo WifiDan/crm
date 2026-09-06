@@ -1,15 +1,19 @@
-import { DEFAULT_AGENT_MODEL } from "@crm/db/settings";
 import { defineAgent, defineDynamic } from "eve";
 import { z } from "zod";
+import {
+	DEFAULT_AGENT_MODEL_CONTEXT_WINDOW_TOKENS,
+	defaultAgentModel,
+} from "../../lib/default-model";
 import { selectedModel } from "../../lib/model";
 
 export default defineAgent({
 	description:
 		"Turn one private CRM builder-chat request into a validated, reviewable team-agent version without deploying it.",
 	model: defineDynamic({
-		fallback: DEFAULT_AGENT_MODEL.id,
+		fallback: defaultAgentModel,
 		events: { "session.started": () => selectedModel() },
 	}),
+	modelContextWindowTokens: DEFAULT_AGENT_MODEL_CONTEXT_WINDOW_TOKENS,
 	outputSchema: z.object({
 		status: z.literal("draft_ready"),
 		summary: z.string().min(1).max(1000),
