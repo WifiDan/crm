@@ -1,4 +1,4 @@
-import { isMicrosoftConfigured, signsInWithMicrosoft } from "@crm/auth";
+import { isZohoConfigured, signsInWithZoho } from "@crm/auth";
 import type { Db, Prisma } from "@crm/db";
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ActivityStampService } from "../crm/activity-stamp.service";
@@ -7,23 +7,23 @@ import { MailboxTokenService } from "../mailbox/mailbox-token.service";
 import { SyncStateService } from "../mailbox/sync-state.service";
 import { rebuildThreads } from "../mailbox/thread-rebuild";
 import {
-	MICROSOFT_PROVIDER_ID,
-	MICROSOFT_SYNC_SOURCES,
-	type MicrosoftSyncSource,
 	SCOPE_FOR_SOURCE,
-} from "./microsoft.constants";
+	ZOHO_PROVIDER_ID,
+	ZOHO_SYNC_SOURCES,
+	type ZohoSyncSource,
+} from "./zoho.constants";
 import type {
-	MicrosoftConnectionStatus,
-	MicrosoftSourceStatus,
-	PurgeSyncedDataOutput,
-	RevokeAccessOutput,
-} from "./microsoft.contracts";
+	ZohoConnectionStatus,
+	ZohoPurgeSyncedDataOutput,
+	ZohoRevokeAccessOutput,
+	ZohoSourceStatus,
+} from "./zoho.contracts";
 
 const PURGE_TIMEOUT_MS = 60_000;
 
 @Injectable()
-export class MicrosoftConnectionService {
-	private readonly logger = new Logger(MicrosoftConnectionService.name);
+export class ZohoConnectionService {
+	private readonly logger = new Logger(ZohoConnectionService.name);
 
 	constructor(
 		@InjectDatabase() private readonly db: Db,
@@ -32,40 +32,37 @@ export class MicrosoftConnectionService {
 		private readonly stamp: ActivityStampService,
 	) {}
 
-	async status(userId: string): Promise<MicrosoftConnectionStatus> {
+	async status(userId: string): Promise<ZohoConnectionStatus> {
 		await this.onConnected(userId);
 
 		const [granted, rows, hasRefreshToken, accounts] = await Promise.all([
-			this.tokens.grantedScopes(userId, MICROSOFT_PROVIDER_ID),
-			this.state.listForUser(userId, MICROSOFT_SYNC_SOURCES),
-			this.tokens.hasRefreshToken(userId, MICROSOFT_PROVIDER_ID),
+			this.tokens.grantedScopes(userId, ZOHO_PROVIDER_ID),
+			this.state.listForUser(userId, ZOHO_SYNC_SOURCES),
+			this.tokens.hasRefreshToken(userId, ZOHO_PROVIDER_ID),
 			this.tokens.signInAccounts(userId),
 		]);
 
 		const bySource = new Map(rows.map((row) => [row.source, row]));
 
-		const sources = MICROSOFT_SYNC_SOURCES.map(
-			(source): MicrosoftSourceStatus => {
-				const row = bySource.get(source);
+		const sources = ZOHO_SYNC_SOURCES.map((source): ZohoSourceStatus => {
+			const row = bySource.get(source);
 
-				return {
-					source,
-					connected: granted.has(SCOPE_FOR_SOURCE[source]),
-					status: row?.status ?? null,
-					lastSyncedAt: row?.lastSyncedAt?.toISOString() ?? null,
-					lastError: row?.lastError ?? null,
-					autoCreate: row?.autoCreate ?? false,
-				};
-			},
-		);
+			return {
+				source,
+				connected: granted.has(SCOPE_FOR_SOURCE[source]),
+				status: row?.status ?? null,
+				lastSyncedAt: row?.lastSyncedAt?.toISOString() ?? null,
+				lastError: row?.lastError ?? null,
+				autoCreate: row?.autoCreate ?? false,
+			};
+		});
 
 		return {
-			configured: isMicrosoftConfigured(),
+			configured: isZohoConfigured(),
 			linked:
-				accounts.some(
-					(account) => account.providerId === MICROSOFT_PROVIDER_ID,
-				) && sources.some((source) => source.connected),
-			required: signsInWithMicrosoft(accounts),
+				accounts.some((account) => account.providerId === ZOHO_PROVIDER_ID) &&
+				sources.some((source) => source.connected),
+			required: signsInWithZoho(accounts),
 			hasRefreshToken,
 			sources,
 		};
@@ -73,15 +70,15 @@ export class MicrosoftConnectionService {
 
 	async onConnected(userId: string): Promise<void> {
 		const [granted, existing] = await Promise.all([
-			this.tokens.grantedScopes(userId, MICROSOFT_PROVIDER_ID),
-			this.state.listForUser(userId, MICROSOFT_SYNC_SOURCES),
+			this.tokens.grantedScopes(userId, ZOHO_PROVIDER_ID),
+			this.state.listForUser(userId, ZOHO_SYNC_SOURCES),
 		]);
 
 		const known = new Set(existing.map((row) => row.source));
 
 		const added: string[] = [];
 
-		for (const source of MICROSOFT_SYNC_SOURCES) {
+		for (const source of ZOHO_SYNC_SOURCES) {
 			if (!granted.has(SCOPE_FOR_SOURCE[source])) continue;
 			if (known.has(source)) continue;
 
@@ -91,19 +88,15 @@ export class MicrosoftConnectionService {
 		}
 
 		if (added.length > 0) {
-			this.logger.log({
-				message: "Microsoft connected",
-				userId,
-				sources: added,
-			});
+			this.logger.log({ message: "Zoho connected", userId, sources: added });
 		}
 	}
 
 	async reconcileAll(): Promise<void> {
 		const accounts = await this.db.account.findMany({
 			where: {
-				providerId: MICROSOFT_PROVIDER_ID,
-				OR: MICROSOFT_SYNC_SOURCES.map((source) => ({
+				providerId: ZOHO_PROVIDER_ID,
+				OR: ZOHO_SYNC_SOURCES.map((source) => ({
 					scope: { contains: SCOPE_FOR_SOURCE[source] },
 				})),
 			},
@@ -115,10 +108,10 @@ export class MicrosoftConnectionService {
 		}
 	}
 
-	async purgeSyncedData(userId: string): Promise<PurgeSyncedDataOutput> {
+	async purgeSyncedData(userId: string): Promise<ZohoPurgeSyncedDataOutput> {
 		const mine: Prisma.EmailMessageWhereInput = {
 			syncedByUserId: userId,
-			outlookMessageId: { not: null },
+			zohoMessageId: { not: null },
 		};
 
 		const purged = await this.db.$transaction(
@@ -145,23 +138,23 @@ export class MicrosoftConnectionService {
 
 		await this.stamp.recomputeAll();
 
-		this.logger.log({ message: "Outlook data purged", userId, purged });
+		this.logger.log({ message: "Zoho Mail data purged", userId, purged });
 
 		return { purged };
 	}
 
-	async revoke(userId: string): Promise<RevokeAccessOutput> {
-		for (const source of MICROSOFT_SYNC_SOURCES) {
+	async revoke(userId: string): Promise<ZohoRevokeAccessOutput> {
+		for (const source of ZOHO_SYNC_SOURCES) {
 			await this.state.remove(userId, source);
 		}
 
-		const revoked = await this.tokens.revoke(userId, MICROSOFT_PROVIDER_ID);
+		const revoked = await this.tokens.revoke(userId, ZOHO_PROVIDER_ID);
 		return { revoked };
 	}
 
 	async setAutoCreate(
 		userId: string,
-		source: MicrosoftSyncSource,
+		source: ZohoSyncSource,
 		enabled: boolean,
 	): Promise<void> {
 		const row = await this.state.get(userId, source);
