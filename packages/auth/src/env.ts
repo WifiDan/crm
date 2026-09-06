@@ -78,6 +78,20 @@ const appUrls = (optional("APP_URL") ?? DEFAULT_APP_URL)
 
 const appUrl = appUrls[0] ?? DEFAULT_APP_URL;
 
+// Whether the session cookie carries the Secure flag and the __Secure- name
+// prefix. This must be derived from the URL scheme, never from NODE_ENV: the
+// API and the Next app are separate processes, and `next start` forces
+// NODE_ENV=production while a plain `bun dist/main.js` does not. When the two
+// disagree, one process writes `crm.session_token` and the other looks for
+// `__Secure-crm.session_token`, so a perfectly good sign-in reads as "no
+// session" and bounces back to /sign-in. The scheme is the same for both.
+const secureCookies = (): boolean => {
+	const override = optional("AUTH_SECURE_COOKIES");
+	if (override) return override !== "false" && override !== "0";
+
+	return apiUrl.startsWith("https://");
+};
+
 export const env = {
 	apiUrl,
 	appUrl,
@@ -88,6 +102,7 @@ export const env = {
 	cookieDomain: optional("AUTH_COOKIE_DOMAIN"),
 	trustedOrigins: [...new Set([...appUrls, apiUrl])],
 	isProduction: process.env.NODE_ENV === "production",
+	secureCookies: secureCookies(),
 } as const;
 
 export function isGoogleConfigured(): boolean {
