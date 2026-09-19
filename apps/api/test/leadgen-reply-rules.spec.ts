@@ -8,6 +8,7 @@ import {
 	htmlToText,
 	isAutoReply,
 	referencedMessageIds,
+	shouldKeepExistingJudgement,
 } from "../src/leadgen/reply-rules";
 
 const FOOTER =
@@ -158,5 +159,32 @@ describe("html-only mail", () => {
 		expect(hasNewText("  \n ")).toBe(false);
 		expect(hasNewText("ok")).toBe(false);
 		expect(hasNewText("Yes, call me")).toBe(true);
+	});
+});
+
+describe("re-polling never erases a recorded judgement", () => {
+	test("a model classification survives a poll where no rule matched", () => {
+		expect(shouldKeepExistingJudgement("llm: asks about price", null)).toBe(
+			true,
+		);
+	});
+
+	test("the drafter's failure counter survives too", () => {
+		expect(shouldKeepExistingJudgement("llm-failed x2: timeout", null)).toBe(
+			true,
+		);
+	});
+
+	test("a rule verdict can still override a model judgement", () => {
+		expect(shouldKeepExistingJudgement("llm: looked interested", "STOP")).toBe(
+			false,
+		);
+	});
+
+	test("a rule-derived result is refreshed normally", () => {
+		expect(shouldKeepExistingJudgement("opt-out wording (stop)", null)).toBe(
+			false,
+		);
+		expect(shouldKeepExistingJudgement(null, null)).toBe(false);
 	});
 });
