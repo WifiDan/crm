@@ -24,6 +24,7 @@ import {
 	type SendPolicy,
 	sendBlockers,
 } from "./reply-send-rules";
+import { sentCheckBlocker } from "./sent-match";
 
 /**
  * THE ONLY FILE IN THE LEADGEN MODULE THAT CAN SEND MAIL.
@@ -172,12 +173,21 @@ export class ReplySendService {
 				classification: { in: ["STOP", "BOUNCE_HARD"] },
 			},
 		});
+		const lastPoll = await this.db.lgJobRun.findFirst({
+			where: { status: "OK", job: { name: "replies.poll" } },
+			orderBy: { startedAt: "desc" },
+			select: { startedAt: true, counters: true },
+		});
 		const subject = replySubject(input.subject);
 		const blockers = sendBlockers({
 			draftStatus: draft.status,
 			reviewedBy: input.reviewer.email ?? input.reviewer.id,
 			leadDoNotContact: draft.lead.doNotContact,
 			leadHasStopOrHardBounce: stopCount > 0,
+			inboundAnsweredVia: draft.inboundMessage.answeredAt
+				? (draft.inboundMessage.answeredVia ?? "already answered")
+				: null,
+			sentCheckProblem: sentCheckBlocker(lastPoll, new Date()),
 			inboundClassification: draft.inboundMessage.classification,
 			to,
 			ownAddresses: [this.identity.address],
@@ -272,6 +282,7 @@ export class ReplySendService {
 			draft.id,
 			draft.inboundMessage.id,
 			sendId,
+			messageId,
 			accepted.response,
 		);
 		return {
@@ -286,6 +297,7 @@ export class ReplySendService {
 		draftId: string,
 		inboundId: string,
 		sendId: string,
+		messageId: string,
 		response: string,
 	): Promise<void> {
 		try {
@@ -299,7 +311,12 @@ export class ReplySendService {
 			});
 			await this.db.lgInboundMessage.update({
 				where: { id: inboundId },
-				data: { handled: true },
+				data: {
+					handled: true,
+					answeredAt: new Date(),
+					answeredVia: "crm-reply",
+					answeredMessageId: messageId,
+				},
 			});
 		} catch (e) {
 			// The email is out. Leave the draft APPROVED (claimed) so it can never be sent twice.

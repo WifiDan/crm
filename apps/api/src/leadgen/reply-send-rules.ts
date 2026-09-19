@@ -96,6 +96,10 @@ export type SendCheckInput = {
 	reviewedBy: string | null;
 	leadDoNotContact: boolean;
 	leadHasStopOrHardBounce: boolean;
+	/** how the inbound was already answered (Sent folder / a CRM reply), or null */
+	inboundAnsweredVia: string | null;
+	/** why the Sent folder cannot be trusted right now, or null when it was read recently */
+	sentCheckProblem: string | null;
 	inboundClassification: string | null;
 	to: string | null;
 	ownAddresses: readonly string[];
@@ -112,6 +116,10 @@ export function sendBlockers(i: SendCheckInput): string[] {
 	if (i.leadDoNotContact) out.push("lead is on the do-not-contact list");
 	if (i.leadHasStopOrHardBounce)
 		out.push("an opt-out or hard bounce is recorded for this lead");
+	if (i.inboundAnsweredVia)
+		out.push(`already answered (${i.inboundAnsweredVia}) - do not reply twice`);
+	if (i.sentCheckProblem)
+		out.push(`cannot confirm it is unanswered: ${i.sentCheckProblem}`);
 	if (i.inboundClassification && NEVER_ANSWER.has(i.inboundClassification))
 		out.push(`inbound message is ${i.inboundClassification} - never answered`);
 	if (!i.to) {

@@ -22,6 +22,8 @@ const clean: SendCheckInput = {
 	reviewedBy: "danio@wifielite.com",
 	leadDoNotContact: false,
 	leadHasStopOrHardBounce: false,
+	inboundAnsweredVia: null,
+	sentCheckProblem: null,
 	inboundClassification: "INTERESTED",
 	to: "fiona@bartique.com",
 	ownAddresses: ["danio@elitesystemsdesign.com"],
@@ -114,6 +116,16 @@ describe("sendBlockers", () => {
 			{ leadHasStopOrHardBounce: true },
 			/opt-out or hard bounce/,
 		],
+		[
+			"already answered from the mail app",
+			{ inboundAnsweredVia: "sent-folder-thread" },
+			/already answered/,
+		],
+		[
+			"Sent folder not confirmed",
+			{ sentCheckProblem: "the Sent folder was last checked 90 minutes ago" },
+			/cannot confirm it is unanswered/,
+		],
 		["inbound is a STOP", { inboundClassification: "STOP" }, /STOP/],
 		[
 			"inbound is a bounce",
@@ -146,7 +158,14 @@ describe("sendBlockers", () => {
 
 type Row = Record<string, unknown> & { id: string };
 
-function makeWorld(over: { doNotContact?: boolean; extraStop?: boolean } = {}) {
+function makeWorld(
+	over: {
+		doNotContact?: boolean;
+		extraStop?: boolean;
+		answered?: boolean;
+		poll?: { minutesAgo: number; counters: unknown } | null;
+	} = {},
+) {
 	const lead: Row = { id: "l1", doNotContact: over.doNotContact ?? false };
 	const inbound: Row = {
 		id: "m1",
@@ -157,7 +176,13 @@ function makeWorld(over: { doNotContact?: boolean; extraStop?: boolean } = {}) {
 		matchedLeadId: "l1",
 		matchedSendId: "s0",
 		handled: false,
+		answeredAt: over.answered ? new Date() : null,
+		answeredVia: over.answered ? "sent-folder-thread" : null,
 	};
+	const poll =
+		over.poll === undefined
+			? { minutesAgo: 5, counters: { sentFolderChecked: 1 } }
+			: over.poll;
 	const draft: Row = {
 		id: "d1",
 		inboundMessageId: "m1",
@@ -214,6 +239,15 @@ function makeWorld(over: { doNotContact?: boolean; extraStop?: boolean } = {}) {
 			count: async ({ where }: { where: Record<string, unknown> }) =>
 				inbounds.filter((r) => match(r, where)).length,
 			update: async ({ data }: { data: Row }) => Object.assign(inbound, data),
+		},
+		lgJobRun: {
+			findFirst: async () =>
+				poll
+					? {
+							startedAt: new Date(Date.now() - poll.minutesAgo * 60_000),
+							counters: poll.counters,
+						}
+					: null,
 		},
 		lgOutreachSend: {
 			count: async ({ where }: { where: Record<string, unknown> }) =>
@@ -329,6 +363,9 @@ describe("ReplySendService: the happy path", () => {
 		expect(w.draft.sentSubject).toBe("Re: Your website");
 		expect(w.draft.sentSendId).toBe(r.sendId);
 		expect(w.inbound.handled).toBe(true);
+		expect(w.inbound.answeredVia).toBe("crm-reply");
+		expect(w.inbound.answeredMessageId).toBe(m.messageId);
+		expect(w.inbound.answeredAt).toBeInstanceOf(Date);
 		const row = w.sends.find((s) => s.id === r.sendId) as Row;
 		expect(row.step).toBe("REPLY");
 		expect(row.dedupeKey).toBe("reply:d1");
@@ -401,6 +438,30 @@ describe("ReplySendService: refuses, and sends nothing", () => {
 	});
 	test("when an opt-out is on file for the lead", async () => {
 		await refuse(makeWorld({ extraStop: true }), base, /opt-out/);
+	});
+	test("when the thread was already answered from the mail app", async () => {
+		await refuse(makeWorld({ answered: true }), base, /already answered/);
+	});
+	test("when the Sent folder was never checked", async () => {
+		await refuse(makeWorld({ poll: null }), base, /never been checked/);
+	});
+	test("when the last mailbox check did not read the Sent folder", async () => {
+		await refuse(
+			makeWorld({
+				poll: { minutesAgo: 3, counters: { sentFolderChecked: 0 } },
+			}),
+			base,
+			/did not read the Sent folder/,
+		);
+	});
+	test("when the Sent-folder check is stale", async () => {
+		await refuse(
+			makeWorld({
+				poll: { minutesAgo: 120, counters: { sentFolderChecked: 1 } },
+			}),
+			base,
+			/120 minutes ago/,
+		);
 	});
 	test("when a [CHECK: ...] placeholder is still in the body", async () => {
 		await refuse(

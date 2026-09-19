@@ -75,6 +75,7 @@ export class RepliesDraftHandler implements LgJobHandler {
 			where: {
 				classification: null,
 				matchedLeadId: { not: null },
+				answeredAt: null,
 				receivedAt: { gte: new Date(Date.now() - WINDOW_DAYS * 86_400_000) },
 				replyDrafts: { none: {} },
 				OR: [

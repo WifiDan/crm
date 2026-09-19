@@ -14,6 +14,7 @@ import {
 	readSendPolicy,
 	sendBlockers,
 } from "./reply-send-rules";
+import { sentCheckBlocker } from "./sent-match";
 
 const BODY_CAP = 6000;
 
@@ -48,6 +49,15 @@ export class ReplyApprovalService {
 		@Inject(LG_REPLY_IDENTITY) private readonly identity: ReplyIdentity,
 	) {}
 
+	private async sentCheckProblem(): Promise<string | null> {
+		const lastPoll = await this.db.lgJobRun.findFirst({
+			where: { status: "OK", job: { name: "replies.poll" } },
+			orderBy: { startedAt: "desc" },
+			select: { startedAt: true, counters: true },
+		});
+		return sentCheckBlocker(lastPoll, new Date());
+	}
+
 	async status(
 		email: string | null,
 	): Promise<z.infer<typeof replyStatusOutput>> {
@@ -64,6 +74,7 @@ export class ReplyApprovalService {
 			maxPerDay: policy.maxPerDay,
 			sentLast24h,
 			from: this.identity.address,
+			sentCheck: await this.sentCheckProblem(),
 		};
 	}
 
@@ -89,6 +100,7 @@ export class ReplyApprovalService {
 				})
 			).map((m) => m.matchedLeadId),
 		);
+		const sentProblem = await this.sentCheckProblem();
 		const items: Item[] = rows.map((r) => {
 			const to = extractAddress(r.inboundMessage.fromAddr);
 			const { rationale, checks } = splitRationale(r.rationale);
@@ -108,6 +120,10 @@ export class ReplyApprovalService {
 								reviewedBy: "reviewer",
 								leadDoNotContact: r.lead.doNotContact,
 								leadHasStopOrHardBounce: stopLeads.has(r.leadId),
+								inboundAnsweredVia: r.inboundMessage.answeredAt
+									? (r.inboundMessage.answeredVia ?? "already answered")
+									: null,
+								sentCheckProblem: sentProblem,
 								inboundClassification: r.inboundMessage.classification,
 								to,
 								ownAddresses: [this.identity.address],
@@ -138,6 +154,10 @@ export class ReplyApprovalService {
 						? r.inboundMessage.receivedAt.toISOString()
 						: null,
 					classification: r.inboundMessage.classification,
+					answeredAt: r.inboundMessage.answeredAt
+						? r.inboundMessage.answeredAt.toISOString()
+						: null,
+					answeredVia: r.inboundMessage.answeredVia,
 				},
 			};
 		});

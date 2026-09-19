@@ -36,6 +36,8 @@ export const replyItemOutput = z.object({
 		bodyText: z.string().nullable(),
 		receivedAt: iso,
 		classification: z.string().nullable(),
+		answeredAt: iso,
+		answeredVia: z.string().nullable(),
 	}),
 });
 
@@ -49,6 +51,8 @@ export const replyStatusOutput = z.object({
 	maxPerDay: z.number(),
 	sentLast24h: z.number(),
 	from: z.string(),
+	/** why the Sent folder cannot be trusted right now; null when it was read recently */
+	sentCheck: z.string().nullable(),
 });
 
 /** reviewedBy is deliberately NOT an input: it is taken from the authenticated session. */

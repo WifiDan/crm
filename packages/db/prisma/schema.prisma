@@ -1959,6 +1959,9 @@ model LgInboundMessage {
   classification     LgInboundClass?
   classificationEvidence String?
   handled            Boolean         @default(false)
+  answeredAt         DateTime?
+  answeredMessageId  String?
+  answeredVia        String?
   shadow             Boolean         @default(true)
   createdAt          DateTime        @default(now())
 

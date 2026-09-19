@@ -24,6 +24,12 @@ import type { RouterOutputs } from "@/lib/trpc/types";
 type Item = RouterOutputs["leadgenReplies"]["list"]["items"][number];
 
 const PLACEHOLDER = /\[\s*CHECK\b/i;
+const ANSWERED_LABEL: Record<string, string> = {
+	"sent-folder-thread": "You already replied from your mail app",
+	"sent-folder-address":
+		"You emailed this address after their reply (not threaded)",
+	"crm-reply": "Already replied from here",
+};
 const INPUT_CLASS =
 	"h-8 w-full rounded-md border border-border bg-background px-2 text-xs";
 
@@ -103,6 +109,13 @@ function StatusStrip({
 			<Badge variant={status.sendEnabled ? "secondary" : "destructive"}>
 				Sending {status.sendEnabled ? "ON" : "OFF"}
 			</Badge>
+			{status.sentCheck ? (
+				<Badge variant="destructive">
+					Sent folder not confirmed: {status.sentCheck}
+				</Badge>
+			) : (
+				<Badge variant="secondary">Sent folder checked</Badge>
+			)}
 			<Badge variant={status.youAreApprover ? "secondary" : "destructive"}>
 				{status.youAreApprover
 					? "You can send"
@@ -215,6 +228,11 @@ function DraftCard({ item, canSend }: { item: Item; canSend: boolean }) {
 					</a>
 				) : null}
 				{claimed ? <Badge variant="destructive">{item.status}</Badge> : null}
+				{item.inbound.answeredVia ? (
+					<Badge variant="destructive">
+						{ANSWERED_LABEL[item.inbound.answeredVia] ?? "Already answered"}
+					</Badge>
+				) : null}
 			</div>
 
 			{item.sendError ? (

@@ -20,6 +20,12 @@ import {
 	referencedMessageIds,
 	shouldKeepExistingJudgement,
 } from "./reply-rules";
+import {
+	bracketed,
+	matchAnswers,
+	type SentItem,
+	toSentItem,
+} from "./sent-match";
 
 const REPLIED_LEADS_PATH =
 	process.env.LEADGEN_REPLIED_LEADS ??
@@ -28,6 +34,14 @@ const STOP_STATE_PATH =
 	process.env.LEADGEN_STOP_STATE ??
 	"/data/leadgen/scripts/stop_reply_state.json";
 const MAX_MESSAGES = 600;
+const MAX_SENT = 2000;
+
+/** imapflow gives a Date or a string; anything unparseable is treated as unknown, never guessed. */
+function envelopeDate(v: Date | string | undefined): Date | null {
+	if (!v) return null;
+	const d = v instanceof Date ? v : new Date(v);
+	return Number.isNaN(d.getTime()) ? null : d;
+}
 
 type PythonReplied = { leads?: Record<string, { message_ids?: string[] }> };
 type PythonStopState = { processed_message_ids?: string[] };
@@ -48,6 +62,11 @@ type Counters = {
 	replyPythonOnly: number;
 	stopWithDnc: number;
 	stopWithoutDnc: number;
+	sentFolderChecked: number;
+	sentFetched: number;
+	answeredNew: number;
+	answeredThread: number;
+	answeredAddress: number;
 };
 
 type ParsedMail = {
@@ -125,8 +144,9 @@ async function parseMail(
  * strict way (see reply-match.ts), classifies it with the same rules as the live Python scanners
  * (see reply-rules.ts), and stores it in lg_inbound_message flagged `shadow`.
  *
- * It takes NO action: no NocoDB write, no Do-Not-Contact, no notification, nothing sent. The
- * Python scanners stay authoritative. What this job adds is a per-run comparison against their
+ * It takes NO external action: no NocoDB write, no Do-Not-Contact, no notification, nothing sent.
+ * It also reads the Sent folder and records, on lg_inbound_message only, which threads Danio already
+ * answered from his mail app. The Python scanners stay authoritative. What this job adds is a per-run comparison against their
  * state files, which is the evidence the cutover gate is judged on.
  */
 @Injectable()
@@ -145,13 +165,15 @@ export class RepliesPollHandler implements LgJobHandler {
 			);
 		}
 		const days = Number(process.env.LEADGEN_REPLIES_SINCE_DAYS ?? "14");
-		const raw = await this.fetchMailbox({
+		const since = new Date(Date.now() - days * 86_400_000);
+		const mailbox = await this.fetchMailbox({
 			host: process.env.ZOHO_IMAP_HOST ?? "imappro.zoho.com",
 			user,
 			pass,
-			since: new Date(Date.now() - days * 86_400_000),
+			since,
 			ctx,
 		});
+		const raw = mailbox.inbox;
 		const idx = await this.loadIndexes();
 		const py = await loadPythonView();
 
@@ -171,6 +193,11 @@ export class RepliesPollHandler implements LgJobHandler {
 			replyPythonOnly: 0,
 			stopWithDnc: 0,
 			stopWithoutDnc: 0,
+			sentFolderChecked: 0,
+			sentFetched: 0,
+			answeredNew: 0,
+			answeredThread: 0,
+			answeredAddress: 0,
 		};
 		const seen = new Set<string>();
 		const crmReplies = new Set<string>();
@@ -201,6 +228,7 @@ export class RepliesPollHandler implements LgJobHandler {
 		for (const mid of py.repliedMids) {
 			if (seen.has(mid) && !crmReplies.has(mid)) c.replyPythonOnly++;
 		}
+		if (mailbox.sent) await this.applyAnswers(mailbox.sent, since, c);
 		this.logger.log(`replies.poll ${JSON.stringify(c)}`);
 		return { counters: c };
 	}
@@ -306,13 +334,68 @@ export class RepliesPollHandler implements LgJobHandler {
 		}
 	}
 
+	/**
+	 * Sent-folder awareness: a thread Danio already answered from his mail app must stop getting
+	 * drafts and must not be answerable from the CRM. Records evidence on lg_inbound_message only;
+	 * it changes nothing outside the CRM database.
+	 */
+	private async applyAnswers(
+		sent: SentItem[],
+		since: Date,
+		c: Counters,
+	): Promise<void> {
+		c.sentFolderChecked = 1;
+		c.sentFetched = sent.length;
+		const [candidates, sends] = await Promise.all([
+			this.db.lgInboundMessage.findMany({
+				where: {
+					answeredAt: null,
+					matchedLeadId: { not: null },
+					receivedAt: { gte: since },
+				},
+				select: {
+					id: true,
+					messageId: true,
+					fromAddr: true,
+					receivedAt: true,
+					answeredAt: true,
+				},
+			}),
+			this.db.lgOutreachSend.findMany({
+				where: { messageId: { not: null } },
+				select: { messageId: true },
+			}),
+		]);
+		const outreachIds = new Set(
+			sends.map((x) => bracketed(x.messageId)).filter((x): x is string => !!x),
+		);
+		for (const a of matchAnswers(candidates, sent, outreachIds)) {
+			const res = await this.db.lgInboundMessage.updateMany({
+				where: { id: a.inboundId, answeredAt: null },
+				data: {
+					answeredAt: a.sentAt ?? new Date(),
+					answeredMessageId: a.sentMessageId,
+					answeredVia: a.via,
+				},
+			});
+			if (res.count === 1) {
+				c.answeredNew++;
+				if (a.via === "sent-folder-thread") c.answeredThread++;
+				else c.answeredAddress++;
+			}
+		}
+	}
+
 	private async fetchMailbox(opts: {
 		host: string;
 		user: string;
 		pass: string;
 		since: Date;
 		ctx: LgJobContext;
-	}): Promise<{ uid: number; source: Buffer }[]> {
+	}): Promise<{
+		inbox: { uid: number; source: Buffer }[];
+		sent: SentItem[] | null;
+	}> {
 		const client = new ImapFlow({
 			host: opts.host,
 			port: 993,
@@ -324,6 +407,28 @@ export class RepliesPollHandler implements LgJobHandler {
 			this.logger.warn(`imap connection error: ${String(err).slice(0, 140)}`);
 		});
 		await client.connect();
+		try {
+			const inbox = await this.readInbox(client, opts);
+			// A Sent-folder failure must not lose the INBOX ingest, but it is recorded as "not checked".
+			const sent = await this.readSent(client, opts).catch((e: unknown) => {
+				this.logger.warn(`sent folder unreadable: ${String(e).slice(0, 140)}`);
+				return null;
+			});
+			return { inbox, sent };
+		} finally {
+			// Cleanup is best-effort: the server may already have dropped us after a complete fetch.
+			try {
+				await client.logout();
+			} catch {
+				client.close();
+			}
+		}
+	}
+
+	private async readInbox(
+		client: ImapFlow,
+		opts: { since: Date; ctx: LgJobContext },
+	): Promise<{ uid: number; source: Buffer }[]> {
 		const out: { uid: number; source: Buffer }[] = [];
 		const lock = await client.getMailboxLock("INBOX");
 		try {
@@ -336,14 +441,59 @@ export class RepliesPollHandler implements LgJobHandler {
 				if (out.length >= MAX_MESSAGES) break;
 			}
 		} finally {
-			// Cleanup is best-effort: the server may already have dropped us after a complete fetch.
 			try {
 				lock.release();
-				await client.logout();
 			} catch {
-				client.close();
+				// connection already gone
 			}
 		}
 		return out;
+	}
+
+	/** Envelope + References only (no bodies). Null unless the WHOLE window was read. */
+	private async readSent(
+		client: ImapFlow,
+		opts: { since: Date; ctx: LgJobContext },
+	): Promise<SentItem[] | null> {
+		const boxes = await client.list();
+		const box =
+			boxes.find((b) => b.specialUse === "\\Sent") ??
+			boxes.find((b) => /^sent/i.test(b.path));
+		if (!box) return null;
+		const items: SentItem[] = [];
+		let complete = true;
+		const lock = await client.getMailboxLock(box.path);
+		try {
+			for await (const msg of client.fetch(
+				{ since: opts.since },
+				{ uid: true, envelope: true, headers: ["references"] },
+			)) {
+				if (opts.ctx.signal.aborted) throw new Error("aborted");
+				const env = msg.envelope;
+				if (!env) continue;
+				if (items.length >= MAX_SENT) {
+					complete = false;
+					break;
+				}
+				items.push(
+					toSentItem({
+						messageId: env.messageId,
+						inReplyTo: env.inReplyTo,
+						date: envelopeDate(env.date),
+						to: env.to,
+						cc: env.cc,
+						bcc: env.bcc,
+						headers: msg.headers,
+					}),
+				);
+			}
+		} finally {
+			try {
+				lock.release();
+			} catch {
+				// connection already gone
+			}
+		}
+		return complete ? items : null;
 	}
 }
