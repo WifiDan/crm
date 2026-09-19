@@ -4,6 +4,7 @@ import { InjectDatabase } from "../database/database.constants";
 import { nextRunAfter } from "./schedule";
 
 type JobSeed = {
+	enabled?: boolean;
 	name: string;
 	description: string;
 	scheduleKind: "INTERVAL" | "DAILY";
@@ -43,6 +44,17 @@ const JOB_SEEDS: JobSeed[] = [
 		dailyAt: null,
 		timeoutSeconds: 300,
 		maxAgeSeconds: 3600,
+	},
+	{
+		name: "replies.draft",
+		enabled: false,
+		description:
+			"Classifies human replies the rules cannot settle and drafts a response for Danio to approve. Never sends. Disabled by default: it uses the shared Claude plan allowance.",
+		scheduleKind: "INTERVAL",
+		intervalSeconds: 1800,
+		dailyAt: null,
+		timeoutSeconds: 900,
+		maxAgeSeconds: 7200,
 	},
 ];
 
@@ -145,6 +157,7 @@ export class LeadgenSeedService implements OnModuleInit {
 			await this.db.lgJobDefinition.create({
 				data: {
 					name: job.name,
+					enabled: job.enabled ?? true,
 					description: job.description,
 					...spec,
 					timeoutSeconds: job.timeoutSeconds,
