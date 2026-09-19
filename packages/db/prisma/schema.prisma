@@ -2137,3 +2137,19 @@ model SpTicketMessage {
   @@index([ticketId])
   @@map("sp_ticket_message")
 }
+
+model LgSendShadowRun {
+  id         String    @id @default(cuid())
+  runDate    String    @unique
+  asOf       DateTime
+  computedAt DateTime  @default(now())
+  late       Boolean   @default(false)
+  cap        Int
+  hold       Json?
+  candidates Json
+  planned    Json
+  compare    Json?
+  comparedAt DateTime?
+
+  @@map("lg_send_shadow_run")
+}

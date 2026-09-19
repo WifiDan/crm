@@ -6,6 +6,8 @@ import { LeadgenRouter } from "./leadgen.router";
 import { LeadgenSeedService } from "./leadgen.seed";
 import { LeadgenService } from "./leadgen.service";
 import { NocodbMirrorHandler } from "./nocodb-mirror.handler";
+import { OutreachCompareHandler } from "./outreach-compare.handler";
+import { OutreachShadowHandler } from "./outreach-shadow.handler";
 import { RepliesDraftHandler } from "./replies-draft.handler";
 import { RepliesPollHandler } from "./replies-poll.handler";
 import { ReplyApprovalRouter } from "./reply-approval.router";
@@ -25,6 +27,8 @@ import { SendlogSyncHandler } from "./sendlog-sync.handler";
 		SendlogSyncHandler,
 		RepliesPollHandler,
 		RepliesDraftHandler,
+		OutreachShadowHandler,
+		OutreachCompareHandler,
 		{
 			provide: LG_JOB_HANDLERS,
 			useFactory: (

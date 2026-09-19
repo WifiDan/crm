@@ -46,6 +46,26 @@ const JOB_SEEDS: JobSeed[] = [
 		maxAgeSeconds: 3600,
 	},
 	{
+		name: "outreach.shadow",
+		description:
+			"SHADOW (Phase 4): computes which rows the CRM WOULD email at the next 08:30 send, using the Python sender's exact rules, and stores the plan. Sends nothing.",
+		scheduleKind: "DAILY",
+		intervalSeconds: null,
+		dailyAt: "08:27",
+		timeoutSeconds: 600,
+		maxAgeSeconds: 90000,
+	},
+	{
+		name: "outreach.shadow.compare",
+		description:
+			"SHADOW (Phase 4): after the Python sender runs, compares what it actually sent with the CRM plan. Match streak is the cutover gate. Sends nothing.",
+		scheduleKind: "DAILY",
+		intervalSeconds: null,
+		dailyAt: "08:50",
+		timeoutSeconds: 600,
+		maxAgeSeconds: 90000,
+	},
+	{
 		name: "replies.draft",
 		enabled: false,
 		description:
