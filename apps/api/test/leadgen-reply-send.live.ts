@@ -105,9 +105,21 @@ const input = (draftId: string, name: string) => ({
 
 async function main() {
 	const created: string[] = [];
-	const pollDef = await db.lgJobDefinition.findUniqueOrThrow({
+	// the scratch DB is not seeded by a running API, so create the job definition if it is missing
+	let pollDef = await db.lgJobDefinition.findUnique({
 		where: { name: "replies.poll" },
 	});
+	const createdDef = !pollDef;
+	if (!pollDef) {
+		pollDef = await db.lgJobDefinition.create({
+			data: {
+				name: "replies.poll",
+				scheduleKind: "INTERVAL",
+				intervalSeconds: 900,
+				enabled: false,
+			},
+		});
+	}
 	// the send path refuses unless the Sent folder was read recently; simulate a fresh good poll
 	const freshPoll = await db.lgJobRun.create({
 		data: {
@@ -301,6 +313,9 @@ async function main() {
 	} finally {
 		// remove only what this run created
 		await db.lgJobRun.deleteMany({ where: { id: freshPoll.id } });
+		if (createdDef) {
+			await db.lgJobDefinition.delete({ where: { id: pollDef.id } });
+		}
 		for (const id of created) {
 			await db.lgInboundMessage.deleteMany({ where: { matchedLeadId: id } });
 			await db.lgOutreachSend.deleteMany({ where: { leadId: id } });
