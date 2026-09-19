@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import {
 	PageShell,
 	PageShellContent,
 	PageShellDescription,
 	PageShellHeader,
 	PageShellHeading,
+	PageShellLoading,
 	PageShellTitle,
 } from "@/components/page-shell";
 import { requireSession } from "@/lib/session";
@@ -14,8 +16,7 @@ export const metadata: Metadata = {
 	title: "Lead Gen",
 };
 
-export default async function LeadgenPage() {
-	await requireSession();
+export default function LeadgenPage() {
 	return (
 		<PageShell>
 			<PageShellHeader>
@@ -27,8 +28,15 @@ export default async function LeadgenPage() {
 				</PageShellHeading>
 			</PageShellHeader>
 			<PageShellContent>
-				<LeadgenConsole />
+				<Suspense fallback={<PageShellLoading />}>
+					<Leadgen />
+				</Suspense>
 			</PageShellContent>
 		</PageShell>
 	);
+}
+
+async function Leadgen() {
+	await requireSession();
+	return <LeadgenConsole />;
 }
