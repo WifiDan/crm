@@ -33,14 +33,16 @@ export class LeadgenSeedService implements OnModuleInit {
 				kind: "GEO" as const,
 				geoCenter: "Collbran, CO",
 				geoRadiusKm: 40,
-				notes: "Elite Broadband Plateau Valley footprint. UISP + Google Places.",
+				notes:
+					"Elite Broadband Plateau Valley footprint. UISP + Google Places.",
 			},
 			{
 				name: "Montrose",
 				kind: "GEO" as const,
 				geoCenter: "Montrose, CO",
 				geoRadiusKm: 40,
-				notes: "Azotel/SIMPLer + Google Places. Azotel connector must run from Joshua.",
+				notes:
+					"Azotel/SIMPLer + Google Places. Azotel connector must run from Joshua.",
 			},
 			{
 				name: "Gyms (nationwide)",
@@ -50,7 +52,9 @@ export class LeadgenSeedService implements OnModuleInit {
 			},
 		];
 		for (const m of markets) {
-			const found = await this.db.lgMarket.findFirst({ where: { name: m.name } });
+			const found = await this.db.lgMarket.findFirst({
+				where: { name: m.name },
+			});
 			if (!found) {
 				await this.db.lgMarket.create({ data: { ...m, status: "ACTIVE" } });
 			}
@@ -78,7 +82,9 @@ export class LeadgenSeedService implements OnModuleInit {
 			},
 		];
 		for (const c of campaigns) {
-			const found = await this.db.lgCampaign.findUnique({ where: { name: c.name } });
+			const found = await this.db.lgCampaign.findUnique({
+				where: { name: c.name },
+			});
 			if (!found) await this.db.lgCampaign.create({ data: c });
 		}
 

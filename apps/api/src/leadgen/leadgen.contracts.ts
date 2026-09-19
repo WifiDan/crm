@@ -3,6 +3,25 @@ import { listInput } from "../trpc/list-input";
 
 const iso = z.string().nullable();
 
+export const counterValue = z.union([z.number(), z.string()]);
+export const countersOutput = z.record(z.string(), counterValue);
+
+export const LEAD_STAGES = [
+	"NEW",
+	"SCREENED",
+	"APPROVED",
+	"REJECTED",
+	"BUILDING",
+	"BUILT",
+	"IN_REVIEW",
+	"REWORK",
+	"READY",
+	"SENT",
+	"REPLIED",
+	"CONVERTED",
+	"DEAD",
+] as const;
+
 export const jobSummaryOutput = z.object({
 	name: z.string(),
 	description: z.string().nullable(),
@@ -17,7 +36,7 @@ export const jobSummaryOutput = z.object({
 	lastStatus: z.string().nullable(),
 	lastFinishedAt: iso,
 	lastError: z.string().nullable(),
-	lastCounters: z.record(z.string(), z.unknown()).nullable(),
+	lastCounters: countersOutput.nullable(),
 });
 
 export const jobListOutput = z.object({
@@ -38,7 +57,7 @@ export const jobRunOutput = z.object({
 	startedAt: z.string(),
 	finishedAt: iso,
 	error: z.string().nullable(),
-	counters: z.record(z.string(), z.unknown()).nullable(),
+	counters: countersOutput.nullable(),
 });
 
 export const jobRunsOutput = z.array(jobRunOutput);
@@ -81,7 +100,7 @@ export const marketListOutput = z.array(marketOutput);
 
 export const leadsListInput = listInput.extend({
 	marketId: z.string().optional(),
-	stage: z.string().optional(),
+	stage: z.enum(LEAD_STAGES).optional(),
 	table: z.enum(["isp", "gym"]).optional(),
 	doNotContact: z.boolean().optional(),
 });

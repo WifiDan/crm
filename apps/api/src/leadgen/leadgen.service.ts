@@ -2,24 +2,44 @@ import { type Db, type Prisma as PrismaNamespace } from "@crm/db";
 import { Injectable } from "@nestjs/common";
 import type { z } from "zod";
 import { InjectDatabase } from "../database/database.constants";
-import { paginate } from "../trpc/list-input";
+import { paginate, type SortDirection } from "../trpc/list-input";
 import { LgJobSchedulerService } from "./job-scheduler.service";
-import type {
-	alertListOutput,
-	jobListOutput,
-	jobRunsOutput,
-	leadsListInput,
-	leadsListOutput,
-	marketListOutput,
-	mirrorStatusOutput,
+import {
+	type alertListOutput,
+	countersOutput,
+	type jobListOutput,
+	type jobRunsOutput,
+	type leadsListInput,
+	type leadsListOutput,
+	type marketListOutput,
+	type mirrorStatusOutput,
 } from "./leadgen.contracts";
 import { MIRROR_TABLES } from "./mirror-map";
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
-const asRecord = (v: unknown): Record<string, unknown> | null =>
-	v && typeof v === "object" && !Array.isArray(v)
-		? (v as Record<string, unknown>)
-		: null;
+
+function parseCounters(
+	value: PrismaNamespace.JsonValue | undefined,
+): z.infer<typeof countersOutput> | null {
+	const parsed = countersOutput.safeParse(value);
+	return parsed.success ? parsed.data : null;
+}
+
+function leadOrderBy(
+	sort: string,
+	dir: SortDirection,
+): PrismaNamespace.LgLeadOrderByWithRelationInput {
+	switch (sort) {
+		case "stage":
+			return { stage: dir };
+		case "sentAt":
+			return { sentAt: dir };
+		case "updatedAt":
+			return { updatedAt: dir };
+		default:
+			return { businessName: sort === "businessName" ? dir : "asc" };
+	}
+}
 
 @Injectable()
 export class LeadgenService {
@@ -53,7 +73,7 @@ export class LeadgenService {
 					lastStatus: last?.status ?? null,
 					lastFinishedAt: iso(last?.finishedAt),
 					lastError: last?.error ?? null,
-					lastCounters: asRecord(last?.counters),
+					lastCounters: parseCounters(last?.counters),
 				};
 			}),
 		);
@@ -81,7 +101,7 @@ export class LeadgenService {
 			startedAt: r.startedAt.toISOString(),
 			finishedAt: iso(r.finishedAt),
 			error: r.error,
-			counters: asRecord(r.counters),
+			counters: parseCounters(r.counters),
 		}));
 	}
 
@@ -126,41 +146,28 @@ export class LeadgenService {
 	async listLeads(
 		input: z.infer<typeof leadsListInput>,
 	): Promise<z.infer<typeof leadsListOutput>> {
-		const tableId = input.table
-			? MIRROR_TABLES.find((t) => t.key === input.table)?.tableId
-			: undefined;
-		const where: PrismaNamespace.LgLeadWhereInput = {
-			mirrorMissingAt: null,
-			...(input.marketId ? { marketId: input.marketId } : {}),
-			...(input.stage ? { stage: input.stage as never } : {}),
-			...(tableId ? { nocodbTable: tableId } : {}),
-			...(input.doNotContact !== undefined
-				? { doNotContact: input.doNotContact }
-				: {}),
-			...(input.q
-				? {
-						OR: [
-							{ businessName: { contains: input.q, mode: "insensitive" } },
-							{ email: { contains: input.q, mode: "insensitive" } },
-							{ address: { contains: input.q, mode: "insensitive" } },
-						],
-					}
-				: {}),
-		};
-		const sortable: Record<
-			string,
-			PrismaNamespace.LgLeadOrderByWithRelationInput
-		> = {
-			businessName: { businessName: input.dir },
-			stage: { stage: input.dir },
-			sentAt: { sentAt: input.dir },
-			updatedAt: { updatedAt: input.dir },
-		};
-		const orderBy = sortable[input.sort] ?? { businessName: "asc" };
+		const where: PrismaNamespace.LgLeadWhereInput = { mirrorMissingAt: null };
+		if (input.marketId) where.marketId = input.marketId;
+		if (input.stage) where.stage = input.stage;
+		if (input.table) {
+			where.nocodbTable = MIRROR_TABLES.find(
+				(t) => t.key === input.table,
+			)?.tableId;
+		}
+		if (input.doNotContact !== undefined) {
+			where.doNotContact = input.doNotContact;
+		}
+		if (input.q) {
+			where.OR = [
+				{ businessName: { contains: input.q, mode: "insensitive" } },
+				{ email: { contains: input.q, mode: "insensitive" } },
+				{ address: { contains: input.q, mode: "insensitive" } },
+			];
+		}
 		const [rows, total, stageGroups] = await Promise.all([
 			this.db.lgLead.findMany({
 				where,
-				orderBy,
+				orderBy: leadOrderBy(input.sort, input.dir),
 				...paginate(input),
 				include: { market: { select: { name: true } } },
 			}),
@@ -209,7 +216,7 @@ export class LeadgenService {
 					orderBy: { startedAt: "desc" },
 				})
 			: null;
-		const counters = asRecord(lastRun?.counters);
+		const counters = parseCounters(lastRun?.counters);
 		const tables = await Promise.all(
 			MIRROR_TABLES.map(async (t) => {
 				const [active, missing] = await Promise.all([
@@ -220,8 +227,8 @@ export class LeadgenService {
 						where: { nocodbTable: t.tableId, mirrorMissingAt: { not: null } },
 					}),
 				]);
-				const src = counters?.[`${t.key}.source`];
-				const lastRunSource = typeof src === "number" ? src : null;
+				const src = Number(counters?.[`${t.key}.source`]);
+				const lastRunSource = Number.isFinite(src) ? src : null;
 				return {
 					table: t.key,
 					mirroredActive: active,

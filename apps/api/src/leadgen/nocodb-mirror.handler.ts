@@ -1,5 +1,6 @@
-import { type Db, Prisma as PrismaNamespace } from "@crm/db";
+import { type Db, type Prisma as PrismaNamespace } from "@crm/db";
 import { Injectable } from "@nestjs/common";
+import { z } from "zod";
 import { InjectDatabase } from "../database/database.constants";
 import type { LgJobContext, LgJobHandler, LgJobResult } from "./job-handler";
 import {
@@ -7,6 +8,9 @@ import {
 	MIRROR_TABLES,
 	type MirrorTable,
 	type NocoRow,
+	nocoRowSchema,
+	type RawRow,
+	rawRowSchema,
 	toLeadFields,
 } from "./mirror-map";
 
@@ -14,14 +18,25 @@ const PAGE_SIZE = 200;
 const CREATE_CHUNK = 200;
 const UPDATE_CHUNK = 25;
 
-const SOURCE_MARKETS: Record<string, string> = {
-	"PV-UISP": "Plateau Valley",
-	"Montrose-Azotel": "Montrose",
-};
+const SOURCE_MARKETS = new Map([
+	["PV-UISP", "Plateau Valley"],
+	["Montrose-Azotel", "Montrose"],
+]);
+
+const pageSchema = z.object({
+	list: z.array(rawRowSchema).default([]),
+	pageInfo: z.object({
+		totalRows: z.number(),
+		isLastPage: z.boolean().optional(),
+	}),
+});
+
+type SourceRow = { raw: RawRow; row: NocoRow };
 
 function chunks<T>(items: T[], size: number): T[][] {
 	const out: T[][] = [];
-	for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+	for (let i = 0; i < items.length; i += size)
+		out.push(items.slice(i, i + size));
 	return out;
 }
 
@@ -55,10 +70,10 @@ export class NocodbMirrorHandler implements LgJobHandler {
 				this.db.lgCampaign.findUnique({ where: { name: "ISP facelift" } }),
 				this.db.lgCampaign.findUnique({ where: { name: "Gym bundle" } }),
 			]);
-		const marketByName: Record<string, string | undefined> = {
-			"Plateau Valley": plateau?.id,
-			Montrose: montrose?.id,
-		};
+		const marketByName = new Map([
+			["Plateau Valley", plateau?.id],
+			["Montrose", montrose?.id],
+		]);
 
 		const counters: Record<string, number | string> = {};
 		const now = new Date();
@@ -75,7 +90,7 @@ export class NocodbMirrorHandler implements LgJobHandler {
 					`${table.key}: fetched ${rows.length} rows but NocoDB reports ${totalRows} (pagination bug?)`,
 				);
 			}
-			const ids = new Set(rows.map((r) => Number(r.Id)));
+			const ids = new Set(rows.map((r) => r.row.Id));
 			if (ids.size !== rows.length) {
 				throw new Error(`${table.key}: duplicate Id values in NocoDB response`);
 			}
@@ -98,44 +113,38 @@ export class NocodbMirrorHandler implements LgJobHandler {
 			}[] = [];
 			let unchanged = 0;
 
-			for (const row of rows) {
-				const rowId = Number(row.Id);
-				const hash = hashRow(row);
+			for (const { raw, row } of rows) {
+				const hash = hashRow(raw);
 				const fields = toLeadFields(row, table);
-				const sourceLabel = String(row.Source ?? "");
 				const marketId =
 					table.key === "gym"
 						? gymsMarket?.id
-						: marketByName[SOURCE_MARKETS[sourceLabel] ?? ""];
+						: marketByName.get(SOURCE_MARKETS.get(row.Source ?? "") ?? "");
 				const campaignId =
 					table.key === "gym" ? gymCampaign?.id : ispCampaign?.id;
-				const current = byRowId.get(rowId);
+				const current = byRowId.get(row.Id);
 				if (!current) {
 					toCreate.push({
 						...fields,
 						marketId,
 						campaignId,
 						nocodbTable: table.tableId,
-						nocodbRowId: rowId,
-						raw: row as PrismaNamespace.InputJsonValue,
+						nocodbRowId: row.Id,
+						raw,
 						rawHash: hash,
 						mirroredAt: now,
 					});
 				} else if (current.rawHash !== hash || current.mirrorMissingAt) {
-					toUpdate.push({
-						id: current.id,
-						data: {
-							...fields,
-							market: marketId ? { connect: { id: marketId } } : undefined,
-							campaign: campaignId
-								? { connect: { id: campaignId } }
-								: undefined,
-							raw: row as PrismaNamespace.InputJsonValue,
-							rawHash: hash,
-							mirroredAt: now,
-							mirrorMissingAt: null,
-						},
-					});
+					const data: PrismaNamespace.LgLeadUpdateInput = {
+						...fields,
+						raw,
+						rawHash: hash,
+						mirroredAt: now,
+						mirrorMissingAt: null,
+					};
+					if (marketId) data.market = { connect: { id: marketId } };
+					if (campaignId) data.campaign = { connect: { id: campaignId } };
+					toUpdate.push({ id: current.id, data });
 				} else {
 					unchanged++;
 				}
@@ -185,9 +194,9 @@ export class NocodbMirrorHandler implements LgJobHandler {
 		token: string,
 		table: MirrorTable,
 		signal: AbortSignal,
-	): Promise<{ rows: NocoRow[]; totalRows: number }> {
-		const rows: NocoRow[] = [];
-		let totalRows = -1;
+	): Promise<{ rows: SourceRow[]; totalRows: number }> {
+		const rows: SourceRow[] = [];
+		let totalRows = 0;
 		let offset = 0;
 		for (;;) {
 			const url = `${base.replace(/\/$/, "")}/api/v2/tables/${table.tableId}/records?limit=${PAGE_SIZE}&offset=${offset}`;
@@ -197,18 +206,19 @@ export class NocodbMirrorHandler implements LgJobHandler {
 					`NocoDB ${table.key} page at offset ${offset} returned HTTP ${res.status}`,
 				);
 			}
-			const body = (await res.json()) as {
-				list?: NocoRow[];
-				pageInfo?: { totalRows?: number; isLastPage?: boolean };
-			};
-			const list = body.list ?? [];
-			totalRows = Number(body.pageInfo?.totalRows ?? -1);
-			rows.push(...list);
-			if (list.length === 0 || body.pageInfo?.isLastPage) break;
+			const page = pageSchema.parse(await res.json());
+			totalRows = page.pageInfo.totalRows;
+			for (const raw of page.list) {
+				const parsed = nocoRowSchema.safeParse(raw);
+				if (!parsed.success) {
+					throw new Error(
+						`${table.key}: row failed the mirror contract: ${parsed.error.message.slice(0, 300)}`,
+					);
+				}
+				rows.push({ raw, row: parsed.data });
+			}
+			if (page.list.length === 0 || page.pageInfo.isLastPage) break;
 			offset += PAGE_SIZE;
-		}
-		if (totalRows < 0) {
-			throw new Error(`NocoDB ${table.key} did not report pageInfo.totalRows`);
 		}
 		return { rows, totalRows };
 	}

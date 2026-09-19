@@ -1,24 +1,86 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
 
-export type LgStage =
-	| "NEW"
-	| "APPROVED"
-	| "REJECTED"
-	| "BUILT"
-	| "READY"
-	| "SENT"
-	| "REPLIED"
-	| "DEAD";
+const text = z
+	.union([z.string(), z.number()])
+	.nullish()
+	.transform((v) => {
+		const s = v === null || v === undefined ? "" : String(v).trim();
+		return s === "" ? null : s;
+	});
 
-export type NocoRow = Record<string, unknown>;
+const truthy = z.union([z.boolean(), z.number(), z.string()]).nullish();
+
+const flag = truthy.transform((v) => v === true || v === 1 || v === "true");
+
+const optionalFlag = truthy.transform((v) =>
+	v === null || v === undefined ? null : v === true || v === 1 || v === "true",
+);
+
+const instant = text.transform((s) => {
+	if (!s) return null;
+	const d = new Date(s);
+	return Number.isNaN(d.getTime()) ? null : d;
+});
+
+const whole = z
+	.union([z.number(), z.string()])
+	.nullish()
+	.transform((v) => {
+		if (v === null || v === undefined || v === "") return null;
+		const n = Number(v);
+		return Number.isFinite(n) ? Math.trunc(n) : null;
+	});
+
+/**
+ * The columns the mirror understands, across BOTH NocoDB lead tables. The
+ * NocoDB response is parsed against this at the boundary; anything it does not
+ * name is ignored here but is still preserved verbatim in lg_lead.raw.
+ */
+export const nocoRowSchema = z.object({
+	Id: z.number(),
+	Source: text,
+	Phone: text,
+	Email: text,
+	"Contact Email": text,
+	"Quality Score": whole,
+	"Has Website": optionalFlag,
+	"Approval Decision": text,
+	"Send Approved": flag,
+	"Do Not Contact": flag,
+	"Sent At": instant,
+	"Replied At": instant,
+	"Hot Lead": flag,
+	"Business Name": text,
+	Address: text,
+	"Website URL": text,
+	"Demo Site URL": text,
+	"Gym Name": text,
+	"Address / Location": text,
+	"Old Site URL": text,
+	"Demo/New Site URL": text,
+});
+
+export type NocoRow = z.infer<typeof nocoRowSchema>;
+
+const jsonSchema = z.json();
+export type Json = z.infer<typeof jsonSchema>;
+
+export const rawRowSchema = z.record(z.string(), jsonSchema);
+export type RawRow = z.infer<typeof rawRowSchema>;
+
+type NameField = "Business Name" | "Gym Name";
+type AddressField = "Address" | "Address / Location";
+type WebsiteField = "Website URL" | "Old Site URL";
+type DemoField = "Demo Site URL" | "Demo/New Site URL";
 
 export type MirrorTable = {
 	key: "isp" | "gym";
 	tableId: string;
-	nameField: string;
-	addressField: string;
-	websiteField: string;
-	demoField: string;
+	nameField: NameField;
+	addressField: AddressField;
+	websiteField: WebsiteField;
+	demoField: DemoField;
 };
 
 export const MIRROR_TABLES: MirrorTable[] = [
@@ -40,76 +102,65 @@ export const MIRROR_TABLES: MirrorTable[] = [
 	},
 ];
 
-function str(v: unknown): string | null {
-	if (v === null || v === undefined) return null;
-	const s = String(v).trim();
-	return s === "" ? null : s;
-}
-
-function bool(v: unknown): boolean {
-	return v === true || v === 1 || v === "true";
-}
-
-export function toDate(v: unknown): Date | null {
-	const s = str(v);
-	if (!s) return null;
-	const d = new Date(s);
-	return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function num(v: unknown): number | null {
-	if (v === null || v === undefined || v === "") return null;
-	const n = Number(v);
-	return Number.isFinite(n) ? Math.trunc(n) : null;
-}
+export type LgStage =
+	| "NEW"
+	| "APPROVED"
+	| "REJECTED"
+	| "BUILT"
+	| "READY"
+	| "SENT"
+	| "REPLIED"
+	| "DEAD";
 
 /** Best-effort funnel stage. `raw` stays the source of truth; this is a view. */
 export function deriveStage(row: NocoRow, table: MirrorTable): LgStage {
-	if (bool(row["Do Not Contact"])) return "DEAD";
-	if (toDate(row["Replied At"])) return "REPLIED";
-	if (toDate(row["Sent At"])) return "SENT";
-	const decision = str(row["Approval Decision"]);
+	if (row["Do Not Contact"]) return "DEAD";
+	if (row["Replied At"]) return "REPLIED";
+	if (row["Sent At"]) return "SENT";
+	const decision = row["Approval Decision"];
 	if (decision === "Rejected") return "REJECTED";
-	if (bool(row["Send Approved"])) return "READY";
-	if (decision === "Approved" && str(row[table.demoField])) return "BUILT";
+	if (row["Send Approved"]) return "READY";
+	if (decision === "Approved" && row[table.demoField]) return "BUILT";
 	if (decision === "Approved") return "APPROVED";
 	return "NEW";
 }
 
 /** Stable across key order so an unchanged row hashes identically every run. */
-export function stableStringify(value: unknown): string {
-	if (value === null || typeof value !== "object") return JSON.stringify(value);
-	if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-	const obj = value as Record<string, unknown>;
-	return `{${Object.keys(obj)
-		.sort()
-		.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`)
-		.join(",")}}`;
+export function stableStringify(value: Json): string {
+	const list = z.array(jsonSchema).safeParse(value);
+	if (list.success) return `[${list.data.map(stableStringify).join(",")}]`;
+	const dict = rawRowSchema.safeParse(value);
+	if (dict.success) {
+		const entries = Object.entries(dict.data).sort(([a], [b]) =>
+			a < b ? -1 : a > b ? 1 : 0,
+		);
+		return `{${entries
+			.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`)
+			.join(",")}}`;
+	}
+	return JSON.stringify(value);
 }
 
-export function hashRow(row: NocoRow): string {
+export function hashRow(row: RawRow): string {
 	return createHash("sha256").update(stableStringify(row)).digest("hex");
 }
 
 export function toLeadFields(row: NocoRow, table: MirrorTable) {
 	return {
-		businessName: str(row[table.nameField]) ?? "(unnamed)",
-		address: str(row[table.addressField]),
-		phone: str(row.Phone),
-		email: str(row.Email) ?? str(row["Contact Email"]),
-		websiteUrl: str(row[table.websiteField]),
-		demoUrl: str(row[table.demoField]),
-		hasWebsite:
-			row["Has Website"] === null || row["Has Website"] === undefined
-				? null
-				: bool(row["Has Website"]),
-		qualityScore: num(row["Quality Score"]),
+		businessName: row[table.nameField] ?? "(unnamed)",
+		address: row[table.addressField],
+		phone: row.Phone,
+		email: row.Email ?? row["Contact Email"],
+		websiteUrl: row[table.websiteField],
+		demoUrl: row[table.demoField],
+		hasWebsite: row["Has Website"],
+		qualityScore: row["Quality Score"],
 		stage: deriveStage(row, table),
-		approvalDecision: str(row["Approval Decision"]),
-		sendApproved: bool(row["Send Approved"]),
-		doNotContact: bool(row["Do Not Contact"]),
-		sentAt: toDate(row["Sent At"]),
-		repliedAt: toDate(row["Replied At"]),
-		hotLead: bool(row["Hot Lead"]),
+		approvalDecision: row["Approval Decision"],
+		sendApproved: row["Send Approved"],
+		doNotContact: row["Do Not Contact"],
+		sentAt: row["Sent At"],
+		repliedAt: row["Replied At"],
+		hotLead: row["Hot Lead"],
 	};
 }

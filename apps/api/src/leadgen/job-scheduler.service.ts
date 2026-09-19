@@ -55,7 +55,8 @@ export class LgJobSchedulerService
 	onModuleInit(): void {
 		if (process.env.LEADGEN_SCHEDULER_ENABLED !== "true") {
 			this.logger.log({
-				message: "Lead-gen scheduler disabled (LEADGEN_SCHEDULER_ENABLED != true)",
+				message:
+					"Lead-gen scheduler disabled (LEADGEN_SCHEDULER_ENABLED != true)",
 			});
 			return;
 		}
@@ -195,7 +196,10 @@ export class LgJobSchedulerService
 			await this.raiseAlert(
 				"PAGE",
 				`job-failed:${def.name}`,
-				`${def.name} ${timedOut ? "timed out" : "failed"}: ${text}`.slice(0, 500),
+				`${def.name} ${timedOut ? "timed out" : "failed"}: ${text}`.slice(
+					0,
+					500,
+				),
 				def.id,
 			);
 			this.logger.error({ message: "Job failed", job: def.name, error: text });

@@ -8,7 +8,9 @@ import { NocodbMirrorHandler } from "../src/leadgen/nocodb-mirror.handler";
 
 const dbName = /\/([a-z_]+)(\?|$)/.exec(process.env.DATABASE_URL ?? "")?.[1];
 if (dbName !== "crm_dev") {
-	console.error(`refusing to run: DATABASE_URL points at "${dbName}", not crm_dev`);
+	console.error(
+		`refusing to run: DATABASE_URL points at "${dbName}", not crm_dev`,
+	);
 	process.exit(2);
 }
 
@@ -21,17 +23,34 @@ const secrets = Object.fromEntries(
 process.env.NOCODB_URL = "http://joshua.tail261548.ts.net:8080";
 process.env.NOCODB_LEADS_TOKEN = secrets.NOCODB_LOCAL_LEADS_TOKEN;
 
+type Counts = Record<
+	| "isp.source"
+	| "isp.mirrored"
+	| "isp.created"
+	| "isp.updated"
+	| "gym.source"
+	| "gym.mirrored"
+	| "gym.created"
+	| "gym.updated",
+	number
+>;
+
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
-	console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  (${detail})` : ""}`);
+	console.log(
+		`${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  (${detail})` : ""}`,
+	);
 	if (!ok) failures++;
 }
 
 async function runAndWait(scheduler: LgJobSchedulerService) {
 	const started = await scheduler.runNow("nocodb.mirror");
-	if (!started.started || !started.runId) throw new Error(`not started: ${started.reason}`);
+	if (!started.started || !started.runId)
+		throw new Error(`not started: ${started.reason}`);
 	for (let i = 0; i < 240; i++) {
-		const run = await db.lgJobRun.findUniqueOrThrow({ where: { id: started.runId } });
+		const run = await db.lgJobRun.findUniqueOrThrow({
+			where: { id: started.runId },
+		});
 		if (run.status !== "RUNNING") return run;
 		await new Promise((r) => setTimeout(r, 500));
 	}
@@ -51,48 +70,96 @@ const scheduler = new LgJobSchedulerService(db as never, [
 
 await db.lgLead.deleteMany({});
 const run1 = await runAndWait(scheduler);
-const c1 = run1.counters as Record<string, number>;
+const c1 = run1.counters as unknown as Counts;
 console.log("run1", run1.status, JSON.stringify(c1), run1.error ?? "");
 check("run1 OK", run1.status === "OK");
-check("isp mirrored == source", c1["isp.mirrored"] === c1["isp.source"], `${c1["isp.mirrored"]}/${c1["isp.source"]}`);
-check("gym mirrored == source", c1["gym.mirrored"] === c1["gym.source"], `${c1["gym.mirrored"]}/${c1["gym.source"]}`);
-check("total rows mirrored", (await db.lgLead.count()) === c1["isp.source"] + c1["gym.source"]);
+check(
+	"isp mirrored == source",
+	c1["isp.mirrored"] === c1["isp.source"],
+	`${c1["isp.mirrored"]}/${c1["isp.source"]}`,
+);
+check(
+	"gym mirrored == source",
+	c1["gym.mirrored"] === c1["gym.source"],
+	`${c1["gym.mirrored"]}/${c1["gym.source"]}`,
+);
+check(
+	"total rows mirrored",
+	(await db.lgLead.count()) === c1["isp.source"] + c1["gym.source"],
+);
 
 const run2 = await runAndWait(scheduler);
-const c2 = run2.counters as Record<string, number>;
-check("run2 idempotent: created=0 updated=0", c2["isp.created"] === 0 && c2["gym.created"] === 0 && c2["isp.updated"] === 0 && c2["gym.updated"] === 0, JSON.stringify(c2));
+const c2 = run2.counters as unknown as Counts;
+check(
+	"run2 idempotent: created=0 updated=0",
+	c2["isp.created"] === 0 &&
+		c2["gym.created"] === 0 &&
+		c2["isp.updated"] === 0 &&
+		c2["gym.updated"] === 0,
+	JSON.stringify(c2),
+);
 
-const victim = await db.lgLead.findFirstOrThrow({ where: { doNotContact: false } });
+const victim = await db.lgLead.findFirstOrThrow({
+	where: { doNotContact: false },
+});
 await db.lgLead.delete({ where: { id: victim.id } });
 await db.lgLead.update({
-	where: { id: (await db.lgLead.findFirstOrThrow({ where: { NOT: { id: victim.id } } })).id },
+	where: {
+		id: (
+			await db.lgLead.findFirstOrThrow({ where: { NOT: { id: victim.id } } })
+		).id,
+	},
 	data: { rawHash: "tampered" },
 });
 const run3 = await runAndWait(scheduler);
-const c3 = run3.counters as Record<string, number>;
-check("run3 repairs a deleted row and a tampered hash", c3["isp.created"] + c3["gym.created"] === 1 && c3["isp.updated"] + c3["gym.updated"] === 1, JSON.stringify(c3));
-check("run3 counts back in sync", (await db.lgLead.count()) === c1["isp.source"] + c1["gym.source"]);
+const c3 = run3.counters as unknown as Counts;
+check(
+	"run3 repairs a deleted row and a tampered hash",
+	c3["isp.created"] + c3["gym.created"] === 1 &&
+		c3["isp.updated"] + c3["gym.updated"] === 1,
+	JSON.stringify(c3),
+);
+check(
+	"run3 counts back in sync",
+	(await db.lgLead.count()) === c1["isp.source"] + c1["gym.source"],
+);
 
 const dnc = await db.lgLead.count({ where: { doNotContact: true } });
 console.log("DNC rows mirrored:", dnc);
 check("DNC rows mirrored (>0)", dnc > 0);
 
 const stale = await db.lgJobRun.create({
-	data: { jobId: (await db.lgJobDefinition.findFirstOrThrow()).id, status: "RUNNING", leaseExpiresAt: new Date(Date.now() - 60_000) },
+	data: {
+		jobId: (await db.lgJobDefinition.findFirstOrThrow()).id,
+		status: "RUNNING",
+		leaseExpiresAt: new Date(Date.now() - 60_000),
+	},
 });
 await scheduler.tick();
 const swept = await db.lgJobRun.findUniqueOrThrow({ where: { id: stale.id } });
 check("expired lease swept to TIMED_OUT", swept.status === "TIMED_OUT");
-check("PAGE alert raised for the dead run", (await db.lgAlert.count({ where: { key: "job-failed:nocodb.mirror", resolvedAt: null } })) === 1);
+check(
+	"PAGE alert raised for the dead run",
+	(await db.lgAlert.count({
+		where: { key: "job-failed:nocodb.mirror", resolvedAt: null },
+	})) === 1,
+);
 
-await db.lgJobDefinition.updateMany({ data: { nextRunAt: new Date(Date.now() - 1000) } });
+await db.lgJobDefinition.updateMany({
+	data: { nextRunAt: new Date(Date.now() - 1000) },
+});
 const before = await db.lgJobRun.count();
 await scheduler.tick();
 await new Promise((r) => setTimeout(r, 4000));
 check("due job claimed by tick()", (await db.lgJobRun.count()) === before + 1);
 const next = (await db.lgJobDefinition.findFirstOrThrow()).nextRunAt;
-check("nextRunAt advanced ~15 min", !!next && next.getTime() > Date.now() + 10 * 60_000);
+check(
+	"nextRunAt advanced ~15 min",
+	!!next && next.getTime() > Date.now() + 10 * 60_000,
+);
 
-console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
+console.log(
+	failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`,
+);
 await db.$disconnect();
 process.exit(failures === 0 ? 0 : 1);
