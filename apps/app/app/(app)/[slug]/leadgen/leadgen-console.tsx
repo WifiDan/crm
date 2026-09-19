@@ -11,8 +11,9 @@ import {
 } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTRPC } from "@/lib/trpc/client";
+import { RepliesTab } from "./replies-tab";
 
-const TABS = ["Jobs", "Leads", "Markets", "Alerts"] as const;
+const TABS = ["Jobs", "Replies", "Leads", "Markets", "Alerts"] as const;
 type Tab = (typeof TABS)[number];
 
 const STAGES = [
@@ -64,6 +65,7 @@ export function LeadgenConsole() {
 				))}
 			</div>
 			{tab === "Jobs" ? <JobsTab /> : null}
+			{tab === "Replies" ? <RepliesTab /> : null}
 			{tab === "Leads" ? <LeadsTab /> : null}
 			{tab === "Markets" ? <MarketsTab /> : null}
 			{tab === "Alerts" ? <AlertsTab /> : null}

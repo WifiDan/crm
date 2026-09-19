@@ -27,6 +27,7 @@ import { fieldListInput, fieldListOutput, fieldByKeyInput, serializedFieldOutput
 import { googleConnectionStatusOutput, setAutoCreateInput, suppressDomainInput, suppressDomainOutput, threadInput, emailThreadOutput, calendarEventInput, calendarEventOutput } from "../google/google.contracts";
 import { purgeSyncedDataOutput, revokeAccessOutput, microsoftConnectionStatusOutput, setOutlookAutoCreateInput } from "../microsoft/microsoft.contracts";
 import { jobListOutput, jobRunsInput, jobRunsOutput, jobNameInput, jobRunNowOutput, jobSetEnabledInput, okOutput, alertListOutput, marketListOutput, leadsListInput, leadsListOutput, mirrorStatusOutput } from "../leadgen/leadgen.contracts";
+import { replyStatusOutput, replyListInput, replyListOutput, replySendInput, replySendOutput, replyDiscardInput, replyDiscardOutput } from "../leadgen/reply-approval.contracts";
 import { savedViewListInput, savedViewListOutput, savedViewCreateInput, savedViewOutput, savedViewUpdateArgs, savedViewIdInput, savedViewDeleteOutput } from "../saved-views/saved-views.contracts";
 import { agentModelOutput, modelCatalogOutput, setAgentModelInput, researchKeyOutput, setResearchKeyInput, archiveRetentionOutput, setArchiveRetentionDaysInput } from "../settings/settings.contracts";
 import { slackStatusOutput, slackMatchesOutput, slackChannelsInput, slackChannelsOutput, slackJoinChannelInput, slackJoinChannelOutput, slackRefreshPeopleOutput, slackCreateChannelInput, slackCreateChannelOutput, slackDisconnectOutput } from "../slack/slack.contracts";
@@ -589,6 +590,23 @@ const appRouter = t.router({
     mirrorStatus: publicProcedure
       .output(mirrorStatusOutput)
       .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
+  leadgenReplies: t.router({
+    status: publicProcedure
+      .output(replyStatusOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    list: publicProcedure
+      .input(replyListInput)
+      .output(replyListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    send: publicProcedure
+      .input(replySendInput)
+      .output(replySendOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    discard: publicProcedure
+      .input(replyDiscardInput)
+      .output(replyDiscardOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
     }),
   microsoft: t.router({
     status: publicProcedure
