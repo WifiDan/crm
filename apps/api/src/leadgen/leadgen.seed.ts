@@ -34,6 +34,16 @@ const JOB_SEEDS: JobSeed[] = [
 		timeoutSeconds: 300,
 		maxAgeSeconds: 7200,
 	},
+	{
+		name: "replies.poll",
+		description:
+			"SHADOW: ingests the outreach mailbox, attributes and classifies replies, and compares itself to the live Python scanners. Takes no action.",
+		scheduleKind: "INTERVAL",
+		intervalSeconds: 900,
+		dailyAt: null,
+		timeoutSeconds: 300,
+		maxAgeSeconds: 3600,
+	},
 ];
 
 /**
