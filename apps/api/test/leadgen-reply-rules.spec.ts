@@ -4,6 +4,8 @@ import {
 	classifyInbound,
 	classifyStopSignal,
 	extractTopText,
+	hasNewText,
+	htmlToText,
 	isAutoReply,
 	referencedMessageIds,
 } from "../src/leadgen/reply-rules";
@@ -130,5 +132,31 @@ describe("threading headers", () => {
 
 	test("missing headers yield nothing", () => {
 		expect(referencedMessageIds(undefined, undefined)).toEqual([]);
+	});
+});
+
+describe("html-only mail", () => {
+	test("is converted to readable text, entities decoded, scripts dropped", () => {
+		const t = htmlToText(
+			"<style>p{color:red}</style><div>Hi Danio,</div><p>Yes &amp; please call me.<br>Thanks</p><script>x()</script>",
+		);
+		expect(t).toContain("Hi Danio,");
+		expect(t).toContain("Yes & please call me.");
+		expect(t).not.toContain("color:red");
+		expect(t).not.toContain("x()");
+	});
+
+	test("an html-only opt-out is still caught once converted", () => {
+		expect(
+			human(htmlToText("<div><b>Please unsubscribe me</b></div>"))
+				.classification,
+		).toBe("STOP");
+	});
+
+	test("nothing new to read means a human must look", () => {
+		expect(hasNewText("")).toBe(false);
+		expect(hasNewText("  \n ")).toBe(false);
+		expect(hasNewText("ok")).toBe(false);
+		expect(hasNewText("Yes, call me")).toBe(true);
 	});
 });

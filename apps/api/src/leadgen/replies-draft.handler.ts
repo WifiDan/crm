@@ -11,7 +11,7 @@ import {
 	needsDraft,
 	parseDraftOutput,
 } from "./reply-draft";
-import { extractTopText } from "./reply-rules";
+import { extractTopText, hasNewText } from "./reply-rules";
 
 const run = promisify(execFile);
 const BATCH = Number(process.env.LEADGEN_DRAFTS_PER_RUN ?? "4");
@@ -109,11 +109,14 @@ export class RepliesDraftHandler implements LgJobHandler {
 	private async ask(row: Candidate): Promise<DraftOutput | null> {
 		const lead = row.matchedLead;
 		if (!lead) return null;
+		const newText = extractTopText(row.bodyText ?? "").top;
+		if (!hasNewText(newText))
+			throw new Error("no new text isolated - needs a human");
 		const prompt = buildDraftPrompt({
 			businessName: lead.businessName,
 			demoUrl: lead.demoUrl,
 			originalSubject: lead.sends[0]?.subject ?? null,
-			replyText: extractTopText(row.bodyText ?? "").top,
+			replyText: newText,
 			offerPrice: lead.campaign?.offerPrice?.toString() ?? null,
 			offerMonthly: lead.campaign?.offerMonthly?.toString() ?? null,
 		});

@@ -15,6 +15,7 @@ import {
 } from "./reply-match";
 import {
 	classifyInbound,
+	htmlToText,
 	type InboundClassification,
 	referencedMessageIds,
 } from "./reply-rules";
@@ -109,7 +110,9 @@ async function parseMail(
 		messageId: norm(p.messageId),
 		fromAddr: norm(p.from?.value[0]?.address ?? ""),
 		subject: p.subject ?? "",
-		body: p.text ?? "",
+		body: p.text?.trim()
+			? p.text
+			: htmlToText(typeof p.html === "string" ? p.html : ""),
 		date: p.date ?? null,
 		refs: referencedMessageIds(p.inReplyTo ?? null, p.references ?? null),
 		headers,
@@ -246,7 +249,7 @@ export class RepliesPollHandler implements LgJobHandler {
 				receivedAt: mail.date,
 				shadow: true,
 			},
-			update: shared,
+			update: { ...shared, bodyText: mail.body.slice(0, 20_000) },
 		});
 	}
 

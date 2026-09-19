@@ -216,3 +216,25 @@ export function classifyInbound(input: {
 	}
 	return { classification: null, evidence: "human reply - needs judgement" };
 }
+
+/** Some mail is HTML-only. Strip it to readable text so the rules and the model see what the person wrote. */
+export function htmlToText(html: string): string {
+	return html
+		.replace(/<(style|script)[\s\S]*?<\/\1>/gi, " ")
+		.replace(/<br\s*\/?>|<\/(p|div|li|tr|h[1-6])>/gi, "\n")
+		.replace(/<[^>]+>/g, " ")
+		.replace(/&nbsp;/gi, " ")
+		.replace(/&amp;/gi, "&")
+		.replace(/&lt;/gi, "<")
+		.replace(/&gt;/gi, ">")
+		.replace(/&#39;|&apos;/gi, "'")
+		.replace(/&quot;/gi, '"')
+		.replace(/[ \t]+/g, " ")
+		.replace(/\n\s*\n+/g, "\n")
+		.trim();
+}
+
+/** True when there is actual new text to judge; false means a human must look (attachment-only, etc.). */
+export function hasNewText(top: string): boolean {
+	return top.replace(/\s+/g, "").length >= 3;
+}
