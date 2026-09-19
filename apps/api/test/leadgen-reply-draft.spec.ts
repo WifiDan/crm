@@ -26,6 +26,13 @@ describe("draft prompt", () => {
 		expect(buildDraftPrompt(ctx)).toContain("Confirm price/promo is current");
 	});
 
+	test("forbids asserting payment methods and using the business name as a person's name", () => {
+		const p = buildDraftPrompt(ctx);
+		expect(p).toContain("NEVER assert a payment method");
+		expect(p).toContain("A business name is NOT a person's name");
+		expect(p).toContain("[CHECK:");
+	});
+
 	test("omits prices it was not given instead of inventing them", () => {
 		const p = buildDraftPrompt({
 			...ctx,
