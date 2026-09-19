@@ -328,6 +328,8 @@ model Company {
   emailThreads   EmailThread[]
   calendarEvents CalendarEvent[]
   fieldValues    FieldValue[]
+  lgLeads        LgLead[]
+  spClients      SpClient[]
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
 
@@ -1584,4 +1586,543 @@ model Apikey {
   @@index([configId])
   @@index([key])
   @@map("apikey")
+}
+
+// =====================================================================
+// Local Lead Gen (lg_*) and client support (sp_*) — Elite Integration.
+// Isolated block appended to upstream's schema. Only touch upstream
+// models at the two back-relation lines on Company. See
+// CONSOLIDATION-PLAN-2026-09-14.md section 4.
+// =====================================================================
+
+enum LgMarketKind {
+  GEO
+  VERTICAL
+  LIST
+}
+
+enum LgMarketStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  EXHAUSTED
+}
+
+enum LgSourceType {
+  GOOGLE_PLACES
+  UISP
+  AZOTEL
+  CSV
+  MANUAL
+  NOCODB_MIRROR
+}
+
+enum LgLeadStage {
+  NEW
+  SCREENED
+  APPROVED
+  REJECTED
+  BUILDING
+  BUILT
+  IN_REVIEW
+  REWORK
+  READY
+  SENT
+  REPLIED
+  CONVERTED
+  DEAD
+}
+
+enum LgBuildStatus {
+  QUEUED
+  RUNNING
+  OK
+  FAILED
+  EXPIRED
+}
+
+enum LgDraftStep {
+  INITIAL
+  FU1
+  FU2
+}
+
+enum LgInboundClass {
+  INTERESTED
+  QUESTION
+  NOT_NOW
+  STOP
+  BOUNCE_HARD
+  BOUNCE_SOFT
+  AUTO_REPLY
+  UNRELATED
+}
+
+enum LgReplyDraftStatus {
+  PENDING
+  APPROVED
+  EDITED
+  SENT
+  DISCARDED
+}
+
+enum LgJobScheduleKind {
+  INTERVAL
+  DAILY
+}
+
+enum LgJobRunStatus {
+  RUNNING
+  OK
+  FAILED
+  TIMED_OUT
+  SKIPPED
+}
+
+enum LgAlertTier {
+  PAGE
+  DIGEST
+  LOG
+}
+
+enum SpClientPlan {
+  BUILD_ONLY
+  BUILD_PLUS_HOSTING
+}
+
+enum SpTicketStatus {
+  NEW
+  TRIAGED
+  IN_PROGRESS
+  WAITING_CLIENT
+  RESOLVED
+  CLOSED
+}
+
+enum SpTicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum SpTicketCategory {
+  CHANGE
+  BUG
+  QUESTION
+  NEW_FEATURE
+  BILLING
+}
+
+enum SpTicketSource {
+  EMAIL
+  PORTAL
+  MANUAL
+}
+
+enum SpMessageDirection {
+  INBOUND
+  OUTBOUND
+  INTERNAL
+}
+
+model LgMarket {
+  id                 String         @id @default(cuid())
+  name               String
+  kind               LgMarketKind
+  geoCenter          String?
+  geoRadiusKm        Float?
+  placeTypes         String[]
+  keywords           String[]
+  verticalSlug       String?
+  status             LgMarketStatus @default(DRAFT)
+  dailyProspectCap   Int            @default(25)
+  notes              String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  sources   LgSource[]
+  leads     LgLead[]
+  campaigns LgMarketCampaign[]
+
+  @@index([status])
+  @@map("lg_market")
+}
+
+model LgCampaign {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  offerPrice     Decimal? @db.Decimal(14, 2)
+  offerMonthly   Decimal? @db.Decimal(14, 2)
+  sendCapPerDay  Int      @default(10)
+  followupDays   Int[]
+  fromIdentity   String?
+  dncScope       String   @default("global")
+  status         String   @default("active")
+  themeRef       String?
+  playbookRef    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  markets  LgMarketCampaign[]
+  leads    LgLead[]
+
+  @@map("lg_campaign")
+}
+
+model LgMarketCampaign {
+  marketId   String
+  market     LgMarket   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  campaignId String
+  campaign   LgCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@id([marketId, campaignId])
+  @@map("lg_market_campaign")
+}
+
+model LgSource {
+  id                String       @id @default(cuid())
+  marketId          String
+  market            LgMarket     @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  type              LgSourceType
+  config            Json         @default("{}")
+  enabled           Boolean      @default(true)
+  lastRunAt         DateTime?
+  lastResultSummary String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  leads LgLead[]
+
+  @@index([marketId])
+  @@map("lg_source")
+}
+
+/// The prospect. Phase 2 is a READ-ONLY mirror of the two NocoDB lead
+/// tables, keyed (nocodbTable, nocodbRowId). `raw` holds the untouched
+/// NocoDB row so the mirror is lossless and can be diffed by hash.
+model LgLead {
+  id             String       @id @default(cuid())
+  marketId       String?
+  market         LgMarket?    @relation(fields: [marketId], references: [id], onDelete: SetNull)
+  campaignId     String?
+  campaign       LgCampaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  sourceId       String?
+  source         LgSource?    @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  companyId      String?
+  company        Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  businessName   String
+  address        String?
+  phone          String?
+  email          String?
+  websiteUrl     String?
+  demoUrl        String?
+  hasWebsite     Boolean?
+  qualityScore   Int?
+  stage          LgLeadStage  @default(NEW)
+  approvalDecision String?
+  sendApproved   Boolean      @default(false)
+  doNotContact   Boolean      @default(false)
+  dncReason      String?
+  dncAt          DateTime?
+  sentAt         DateTime?
+  repliedAt      DateTime?
+  hotLead        Boolean      @default(false)
+  placeId        String?
+  dedupeKey      String?
+
+  nocodbTable    String?
+  nocodbRowId    Int?
+  raw            Json?
+  rawHash        String?
+  mirroredAt     DateTime?
+  mirrorMissingAt DateTime?
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  contacts LgLeadContact[]
+  builds   LgBuild[]
+  drafts   LgOutreachDraft[]
+  sends    LgOutreachSend[]
+  inbound  LgInboundMessage[]
+  replyDrafts LgReplyDraft[]
+
+  @@unique([nocodbTable, nocodbRowId])
+  @@index([marketId])
+  @@index([campaignId])
+  @@index([companyId])
+  @@index([stage])
+  @@index([doNotContact])
+  @@index([email])
+  @@index([dedupeKey])
+  @@map("lg_lead")
+}
+
+model LgLeadContact {
+  id           String   @id @default(cuid())
+  leadId       String
+  lead         LgLead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  kind         String
+  value        String
+  verified     Boolean  @default(false)
+  discoveredVia String?
+  evidence     String?
+  createdAt    DateTime @default(now())
+
+  @@unique([leadId, kind, value])
+  @@map("lg_lead_contact")
+}
+
+model LgBuild {
+  id             String        @id @default(cuid())
+  leadId         String
+  lead           LgLead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  attemptNo      Int           @default(1)
+  status         LgBuildStatus @default(QUEUED)
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  outputPath     String?
+  deployUrl      String?
+  cfBranch       String?
+  qaResult       Json?
+  reworkRequested Boolean      @default(false)
+  reworkNotes    String?
+  expiresAt      DateTime?
+  supersededById String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([leadId])
+  @@index([status])
+  @@map("lg_build")
+}
+
+model LgOutreachDraft {
+  id        String      @id @default(cuid())
+  leadId    String
+  lead      LgLead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  step      LgDraftStep
+  subject   String
+  body      String
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  sends LgOutreachSend[]
+
+  @@unique([leadId, step])
+  @@map("lg_outreach_draft")
+}
+
+/// Immutable send ledger. Backfilled from send-log.jsonl in Phase 2;
+/// written by the sender (two-phase: reserve row, SMTP, confirm) from Phase 4.
+model LgOutreachSend {
+  id           String           @id @default(cuid())
+  leadId       String
+  lead         LgLead           @relation(fields: [leadId], references: [id], onDelete: Restrict)
+  draftId      String?
+  draft        LgOutreachDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  step         LgDraftStep
+  toAddr       String
+  subject      String?
+  messageId    String?          @unique
+  sentAt       DateTime?
+  smtpResponse String?
+  mimeSha256   String?
+  source       String           @default("python-send-log")
+  createdAt    DateTime         @default(now())
+
+  @@index([leadId])
+  @@index([toAddr])
+  @@map("lg_outreach_send")
+}
+
+model LgInboundMessage {
+  id                 String          @id @default(cuid())
+  imapUid            Int?
+  messageId          String?         @unique
+  inReplyTo          String?
+  fromAddr           String
+  subject            String?
+  bodyText           String?
+  receivedAt         DateTime?
+  matchedLeadId      String?
+  matchedLead        LgLead?         @relation(fields: [matchedLeadId], references: [id], onDelete: SetNull)
+  matchedSendId      String?
+  matchMethod        String?
+  classification     LgInboundClass?
+  classificationEvidence String?
+  handled            Boolean         @default(false)
+  shadow             Boolean         @default(true)
+  createdAt          DateTime        @default(now())
+
+  replyDrafts LgReplyDraft[]
+
+  @@index([matchedLeadId])
+  @@index([classification])
+  @@map("lg_inbound_message")
+}
+
+/// AI-drafted reply awaiting a human. HARD RULE (enforced in code, not
+/// prompt): no path from this table to SMTP except an authenticated UI
+/// action, which must stamp reviewedBy.
+model LgReplyDraft {
+  id               String             @id @default(cuid())
+  inboundMessageId String
+  inboundMessage   LgInboundMessage   @relation(fields: [inboundMessageId], references: [id], onDelete: Cascade)
+  leadId           String
+  lead             LgLead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  draftSubject     String
+  draftBody        String
+  rationale        String?
+  status           LgReplyDraftStatus @default(PENDING)
+  reviewedBy       String?
+  reviewedAt       DateTime?
+  sentSendId       String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([status])
+  @@index([leadId])
+  @@map("lg_reply_draft")
+}
+
+model LgJobDefinition {
+  id              String            @id @default(cuid())
+  name            String            @unique
+  description     String?
+  scheduleKind    LgJobScheduleKind
+  intervalSeconds Int?
+  dailyAt         String?
+  timezone        String            @default("America/Denver")
+  enabled         Boolean           @default(true)
+  timeoutSeconds  Int               @default(900)
+  maxAgeSeconds   Int               @default(90000)
+  ownerModule     String            @default("leadgen")
+  nextRunAt       DateTime?
+  lastRunAt       DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  runs LgJobRun[]
+
+  @@index([enabled, nextRunAt])
+  @@map("lg_job_definition")
+}
+
+/// One row per execution. This table is the heartbeat: a job that dies
+/// leaves a RUNNING row with an expired lease, which the next tick marks
+/// TIMED_OUT and alerts on — absence of output becomes a positive signal.
+model LgJobRun {
+  id             String         @id @default(cuid())
+  jobId          String
+  job            LgJobDefinition @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  status         LgJobRunStatus @default(RUNNING)
+  trigger        String         @default("schedule")
+  startedAt      DateTime       @default(now())
+  finishedAt     DateTime?
+  leaseExpiresAt DateTime
+  counters       Json?
+  error          String?
+  logPointer     String?
+
+  @@index([jobId, startedAt])
+  @@index([status, leaseExpiresAt])
+  @@map("lg_job_run")
+}
+
+model LgAlert {
+  id         String      @id @default(cuid())
+  tier       LgAlertTier
+  key        String
+  message    String
+  jobId      String?
+  resolvedAt DateTime?
+  deliveredAt DateTime?
+  createdAt  DateTime    @default(now())
+
+  @@index([tier, resolvedAt])
+  @@index([key])
+  @@map("lg_alert")
+}
+
+model LgLlmCall {
+  id            String   @id @default(cuid())
+  purpose       String
+  model         String
+  relatedType   String?
+  relatedId     String?
+  inputTokens   Int      @default(0)
+  outputTokens  Int      @default(0)
+  cacheReadTokens  Int   @default(0)
+  cacheWriteTokens Int   @default(0)
+  estCostUsd    Decimal  @default(0) @db.Decimal(12, 6)
+  ok            Boolean  @default(true)
+  error         String?
+  createdAt     DateTime @default(now())
+
+  @@index([purpose, createdAt])
+  @@map("lg_llm_call")
+}
+
+model SpClient {
+  id               String       @id @default(cuid())
+  companyId        String
+  company          Company      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  plan             SpClientPlan @default(BUILD_ONLY)
+  hostingMonthly   Decimal?     @db.Decimal(14, 2)
+  liveSiteUrl      String?
+  cfProject        String?
+  onboardedAt      DateTime?
+  primaryContactId String?
+  status           String       @default("active")
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  tickets SpTicket[]
+
+  @@index([companyId])
+  @@map("sp_client")
+}
+
+model SpTicket {
+  id             String           @id @default(cuid())
+  number         Int              @unique @default(autoincrement())
+  clientId       String
+  client         SpClient         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  title          String
+  category       SpTicketCategory @default(QUESTION)
+  priority       SpTicketPriority @default(NORMAL)
+  status         SpTicketStatus   @default(NEW)
+  source         SpTicketSource   @default(EMAIL)
+  originMessageId String?
+  assignedTo     String?
+  dueAt          DateTime?
+  slaBreachAt    DateTime?
+  resolvedAt     DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  messages SpTicketMessage[]
+
+  @@index([clientId])
+  @@index([status])
+  @@map("sp_ticket")
+}
+
+model SpTicketMessage {
+  id        String             @id @default(cuid())
+  ticketId  String
+  ticket    SpTicket           @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  direction SpMessageDirection
+  author    String?
+  body      String
+  aiDrafted Boolean            @default(false)
+  reviewedBy String?
+  sentAt    DateTime?
+  createdAt DateTime           @default(now())
+
+  @@index([ticketId])
+  @@map("sp_ticket_message")
 }
