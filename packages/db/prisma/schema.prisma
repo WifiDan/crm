@@ -1645,6 +1645,7 @@ enum LgDraftStep {
   INITIAL
   FU1
   FU2
+  REPLY
 }
 
 enum LgInboundClass {
@@ -1931,6 +1932,9 @@ model LgOutreachSend {
   sentAt       DateTime?
   smtpResponse String?
   mimeSha256   String?
+  inReplyTo    String?
+  referencesHeader String?
+  sentBy       String?
   source       String           @default("python-send-log")
   createdAt    DateTime         @default(now())
 
@@ -1981,6 +1985,9 @@ model LgReplyDraft {
   reviewedBy       String?
   reviewedAt       DateTime?
   sentSendId       String?
+  sentSubject      String?
+  sentBody         String?
+  sendError        String?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 

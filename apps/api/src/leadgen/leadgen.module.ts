@@ -8,6 +8,14 @@ import { LeadgenService } from "./leadgen.service";
 import { NocodbMirrorHandler } from "./nocodb-mirror.handler";
 import { RepliesDraftHandler } from "./replies-draft.handler";
 import { RepliesPollHandler } from "./replies-poll.handler";
+import { ReplyApprovalRouter } from "./reply-approval.router";
+import { ReplyApprovalService } from "./reply-approval.service";
+import { identityFromEnv, LG_REPLY_IDENTITY } from "./reply-identity";
+import {
+	LG_REPLY_TRANSPORT,
+	ReplySendService,
+	smtpTransportFromEnv,
+} from "./reply-send.service";
 import { SendlogSyncHandler } from "./sendlog-sync.handler";
 
 @Module({
@@ -36,6 +44,17 @@ import { SendlogSyncHandler } from "./sendlog-sync.handler";
 		LeadgenService,
 		LeadgenSeedService,
 		LeadgenRouter,
+		{
+			provide: LG_REPLY_IDENTITY,
+			useFactory: () => identityFromEnv(process.env),
+		},
+		{
+			provide: LG_REPLY_TRANSPORT,
+			useFactory: () => smtpTransportFromEnv(process.env),
+		},
+		ReplySendService,
+		ReplyApprovalService,
+		ReplyApprovalRouter,
 	],
 	exports: [LgJobSchedulerService, LeadgenService],
 })
