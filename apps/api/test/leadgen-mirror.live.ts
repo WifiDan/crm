@@ -5,6 +5,7 @@ import { db } from "@crm/db";
 import { LgJobSchedulerService } from "../src/leadgen/job-scheduler.service";
 import { LeadgenSeedService } from "../src/leadgen/leadgen.seed";
 import { NocodbMirrorHandler } from "../src/leadgen/nocodb-mirror.handler";
+import { SendlogSyncHandler } from "../src/leadgen/sendlog-sync.handler";
 
 const dbName = /\/([a-z_]+)(\?|$)/.exec(process.env.DATABASE_URL ?? "")?.[1];
 if (dbName !== "crm_dev") {
@@ -62,12 +63,14 @@ await seed.seed();
 await seed.seed(); // idempotent
 check("seed: 3 markets", (await db.lgMarket.count()) === 3);
 check("seed: 2 campaigns", (await db.lgCampaign.count()) === 2);
-check("seed: 1 job", (await db.lgJobDefinition.count()) === 1);
+check("seed: 2 jobs", (await db.lgJobDefinition.count()) === 2);
 
 const scheduler = new LgJobSchedulerService(db as never, [
 	new NocodbMirrorHandler(db as never),
+	new SendlogSyncHandler(db as never),
 ]);
 
+await db.lgOutreachSend.deleteMany({});
 await db.lgLead.deleteMany({});
 const run1 = await runAndWait(scheduler);
 const c1 = run1.counters as unknown as Counts;
@@ -124,6 +127,42 @@ check(
 	(await db.lgLead.count()) === c1["isp.source"] + c1["gym.source"],
 );
 
+await db.lgOutreachSend.deleteMany({});
+async function runJob(name: string) {
+	const started = await scheduler.runNow(name);
+	if (!started.started || !started.runId)
+		throw new Error(`not started: ${started.reason}`);
+	for (let i = 0; i < 120; i++) {
+		const run = await db.lgJobRun.findUniqueOrThrow({
+			where: { id: started.runId },
+		});
+		if (run.status !== "RUNNING") return run;
+		await new Promise((r) => setTimeout(r, 500));
+	}
+	throw new Error("job did not finish");
+}
+const sl1 = await runJob("sendlog.sync");
+const s1 = sl1.counters as unknown as Record<string, number>;
+console.log("sendlog run1", sl1.status, JSON.stringify(s1), sl1.error ?? "");
+check("sendlog run1 OK", sl1.status === "OK");
+check(
+	"ledger == matched log lines",
+	(await db.lgOutreachSend.count()) === s1.matchedToLead,
+	`${await db.lgOutreachSend.count()}/${s1.matchedToLead}`,
+);
+const sl2 = await runJob("sendlog.sync");
+const s2 = sl2.counters as unknown as Record<string, number>;
+check(
+	"sendlog run2 idempotent (created=0)",
+	sl2.status === "OK" && s2.created === 0,
+	JSON.stringify(s2),
+);
+check(
+	"no send lost to an unmatched lead",
+	s1.unmatchedLead === 0,
+	`unmatched=${s1.unmatchedLead}`,
+);
+
 const dnc = await db.lgLead.count({ where: { doNotContact: true } });
 console.log("DNC rows mirrored:", dnc);
 check("DNC rows mirrored (>0)", dnc > 0);
@@ -149,9 +188,13 @@ await db.lgJobDefinition.updateMany({
 	data: { nextRunAt: new Date(Date.now() - 1000) },
 });
 const before = await db.lgJobRun.count();
+const due = await db.lgJobDefinition.count();
 await scheduler.tick();
 await new Promise((r) => setTimeout(r, 4000));
-check("due job claimed by tick()", (await db.lgJobRun.count()) === before + 1);
+check(
+	"all due jobs claimed by tick()",
+	(await db.lgJobRun.count()) === before + due,
+);
 const next = (await db.lgJobDefinition.findFirstOrThrow()).nextRunAt;
 check(
 	"nextRunAt advanced ~15 min",

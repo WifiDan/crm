@@ -1927,6 +1927,7 @@ model LgOutreachSend {
   toAddr       String
   subject      String?
   messageId    String?          @unique
+  dedupeKey    String?          @unique
   sentAt       DateTime?
   smtpResponse String?
   mimeSha256   String?

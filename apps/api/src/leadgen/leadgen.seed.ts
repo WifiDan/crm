@@ -3,6 +3,39 @@ import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
 import { InjectDatabase } from "../database/database.constants";
 import { nextRunAfter } from "./schedule";
 
+type JobSeed = {
+	name: string;
+	description: string;
+	scheduleKind: "INTERVAL" | "DAILY";
+	intervalSeconds: number | null;
+	dailyAt: string | null;
+	timeoutSeconds: number;
+	maxAgeSeconds: number;
+};
+
+const JOB_SEEDS: JobSeed[] = [
+	{
+		name: "nocodb.mirror",
+		description:
+			"Read-only mirror of the NocoDB ISP + gym lead tables into lg_lead, with count assertions.",
+		scheduleKind: "INTERVAL",
+		intervalSeconds: 900,
+		dailyAt: null,
+		timeoutSeconds: 600,
+		maxAgeSeconds: 3600,
+	},
+	{
+		name: "sendlog.sync",
+		description:
+			"Mirrors the Python sender's send-log.jsonl into the lg_outreach_send ledger (append-only, deduped).",
+		scheduleKind: "INTERVAL",
+		intervalSeconds: 900,
+		dailyAt: null,
+		timeoutSeconds: 300,
+		maxAgeSeconds: 7200,
+	},
+];
+
 /**
  * Idempotent seed for the three existing markets, two campaigns and the
  * first scheduled job. Never overwrites a row that already exists, so a
@@ -88,24 +121,24 @@ export class LeadgenSeedService implements OnModuleInit {
 			if (!found) await this.db.lgCampaign.create({ data: c });
 		}
 
-		const mirror = await this.db.lgJobDefinition.findUnique({
-			where: { name: "nocodb.mirror" },
-		});
-		if (!mirror) {
+		for (const job of JOB_SEEDS) {
+			const found = await this.db.lgJobDefinition.findUnique({
+				where: { name: job.name },
+			});
+			if (found) continue;
 			const spec = {
-				scheduleKind: "INTERVAL" as const,
-				intervalSeconds: 900,
-				dailyAt: null,
+				scheduleKind: job.scheduleKind,
+				intervalSeconds: job.intervalSeconds,
+				dailyAt: job.dailyAt,
 				timezone: "America/Denver",
 			};
 			await this.db.lgJobDefinition.create({
 				data: {
-					name: "nocodb.mirror",
-					description:
-						"Read-only mirror of the NocoDB ISP + gym lead tables into lg_lead, with count assertions.",
+					name: job.name,
+					description: job.description,
 					...spec,
-					timeoutSeconds: 600,
-					maxAgeSeconds: 3600,
+					timeoutSeconds: job.timeoutSeconds,
+					maxAgeSeconds: job.maxAgeSeconds,
 					nextRunAt: nextRunAfter(spec, new Date()),
 				},
 			});
