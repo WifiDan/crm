@@ -18,6 +18,7 @@ import {
 	htmlToText,
 	type InboundClassification,
 	referencedMessageIds,
+	shouldKeepExistingJudgement,
 } from "./reply-rules";
 
 const REPLIED_LEADS_PATH =
@@ -236,6 +237,14 @@ export class RepliesPollHandler implements LgJobHandler {
 			classification: cls.classification,
 			classificationEvidence: cls.evidence,
 		};
+		const prior = await this.db.lgInboundMessage.findUnique({
+			where: { messageId: mail.messageId },
+			select: { classificationEvidence: true },
+		});
+		const keep = shouldKeepExistingJudgement(
+			prior?.classificationEvidence,
+			cls.classification,
+		);
 		await this.db.lgInboundMessage.upsert({
 			where: { messageId: mail.messageId },
 			create: {
@@ -249,7 +258,18 @@ export class RepliesPollHandler implements LgJobHandler {
 				receivedAt: mail.date,
 				shadow: true,
 			},
-			update: { ...shared, bodyText: mail.body.slice(0, 20_000) },
+			update: {
+				matchedLeadId: shared.matchedLeadId,
+				matchedSendId: shared.matchedSendId,
+				matchMethod: shared.matchMethod,
+				bodyText: mail.body.slice(0, 20_000),
+				...(keep
+					? {}
+					: {
+							classification: shared.classification,
+							classificationEvidence: shared.classificationEvidence,
+						}),
+			},
 		});
 	}
 
@@ -300,6 +320,9 @@ export class RepliesPollHandler implements LgJobHandler {
 			auth: { user: opts.user, pass: opts.pass },
 			logger: false,
 		});
+		client.on("error", (err: unknown) => {
+			this.logger.warn(`imap connection error: ${String(err).slice(0, 140)}`);
+		});
 		await client.connect();
 		const out: { uid: number; source: Buffer }[] = [];
 		const lock = await client.getMailboxLock("INBOX");
@@ -313,8 +336,13 @@ export class RepliesPollHandler implements LgJobHandler {
 				if (out.length >= MAX_MESSAGES) break;
 			}
 		} finally {
-			lock.release();
-			await client.logout();
+			// Cleanup is best-effort: the server may already have dropped us after a complete fetch.
+			try {
+				lock.release();
+				await client.logout();
+			} catch {
+				client.close();
+			}
 		}
 		return out;
 	}

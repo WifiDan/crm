@@ -238,3 +238,15 @@ export function htmlToText(html: string): string {
 export function hasNewText(top: string): boolean {
 	return top.replace(/\s+/g, "").length >= 3;
 }
+
+/**
+ * The poller re-runs every 15 minutes over the same mail. A rule verdict may (re)classify a message,
+ * but "no rule matched" must never erase a judgement the model or a human already recorded, or its
+ * retry counters - otherwise the next poll silently undoes the last drafting run.
+ */
+export function shouldKeepExistingJudgement(
+	existingEvidence: string | null | undefined,
+	ruleClassification: string | null,
+): boolean {
+	return ruleClassification === null && /^llm/i.test(existingEvidence ?? "");
+}

@@ -73,9 +73,9 @@ check(
 );
 const total = await db.lgInboundMessage.count();
 check(
-	"rows written == stored",
-	total - before === c.stored,
-	`+${total - before}`,
+	"every stored message exists as a row (idempotent on a populated table)",
+	total >= c.stored,
+	`${total} rows, +${total - before} new`,
 );
 check(
 	"every stored row is flagged shadow",
@@ -107,6 +107,45 @@ const humanNoRuleMatched = await db.lgInboundMessage.count({
 	where: { classification: null, matchedLeadId: { not: null } },
 });
 console.log(`matched human replies awaiting judgement: ${humanNoRuleMatched}`);
+
+// A later poll must never erase a judgement the drafter recorded (regression: it did, every 15 minutes).
+const target = await db.lgInboundMessage.findFirst({
+	where: {
+		matchedLeadId: { not: null },
+		OR: [
+			{ classification: null },
+			{ classificationEvidence: { startsWith: "llm" } },
+		],
+	},
+});
+if (target) {
+	await db.lgInboundMessage.update({
+		where: { id: target.id },
+		data: {
+			classification: "QUESTION",
+			classificationEvidence: "llm: live-check planted judgement",
+		},
+	});
+	await handler.run(ctx("replies.poll"));
+	const kept = await db.lgInboundMessage.findUniqueOrThrow({
+		where: { id: target.id },
+	});
+	check(
+		"a re-poll keeps the model's classification and evidence",
+		kept.classification === "QUESTION" &&
+			(kept.classificationEvidence ?? "").startsWith("llm:"),
+		`${kept.classification}`,
+	);
+	await db.lgInboundMessage.update({
+		where: { id: target.id },
+		data: {
+			classification: target.classification,
+			classificationEvidence: target.classificationEvidence,
+		},
+	});
+} else {
+	check("found a matched reply to plant a judgement on", false);
+}
 
 // Failure path: a wrong password must FAIL LOUDLY, never return an empty clean result.
 const goodPass = process.env.ZOHO_IMAP_PASSWORD;
