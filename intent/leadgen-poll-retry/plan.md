@@ -23,7 +23,7 @@ So the failure is mid-INBOX-read, not at connect. The request said to retry only
    - Max 3 attempts total. Delays about 2 s then 5 s, each jittered +/-25%. Hard window: no new attempt starts if more than 60 s have passed since the first started (the job timeout is 300 s), and the backoff wait stops on abort.
    - Failure rethrows the ORIGINAL last error object (same message, so the alert text is unchanged) with `lgCounters = { imapAttempts }` attached.
 2. `replies-poll.handler.ts`: `fetchMailbox` wraps only `attemptInbox` (new client, connect, `readInbox`) in `withImapRetry`; a failed attempt closes its client and logs `attempt n/3 failed at connect|inbox`. The Sent read, its swallow-to-null behaviour, and the logout are unchanged and run once, on the successful connection. `createClient` becomes an overridable method (test seam; no DI change). New counter `imapAttempts`.
-3. `job-handler.ts` + `job-scheduler.service.ts`: `failureCounters(err)` so a FAILED run row also keeps `imapAttempts` (previously counters were null on failure). Timed-out rows are unchanged (null).
+3. `imap-retry.ts` (`failureCounters`) + `job-scheduler.service.ts`: `failureCounters(err)` so a FAILED run row also keeps `imapAttempts` (previously counters were null on failure). Timed-out rows are unchanged (null).
 
 ## Tests (fakes only; no network, no DB write)
 
@@ -36,3 +36,9 @@ Each new test is proven able to fail by breaking the code on purpose (report in 
 - A retry fetches another ~30 MB on the rare drop (about 5% of polls, so ~1.5 MB/h average): negligible. The real cost driver is that every poll downloads full sources; not changed here (out of scope, changes ingest behaviour). Worth a separate card.
 - If Zoho throttles logins, 3 attempts inside ~10 s is 2 extra logins on a 5% path. Bounded.
 - Not verifiable offline: that a retry after a real mid-fetch drop succeeds against Zoho. The probe shows the drop is per-connection (the next cycle 4 s later succeeded both times), which is the assumption the retry relies on.
+
+## As built
+
+- Built as planned; `failureCounters` lives in `imap-retry.ts` (not `job-handler.ts`). A new scheduler test (in `leadgen-poll-retry.spec.ts`, fake Db) pins that a FAILED run keeps `imapAttempts` and that the PAGE alert text is unchanged.
+- Real-server check: `test/leadgen-replies.live.ts` (crm_dev, read-only IMAP) passes, including its bad-password case, which failed once at connect with no retry.
+- Not deployed. The prod service keeps the old behaviour until Danio approves a deploy; on deploy, `imapAttempts` appears in Lead Gen > Jobs and each dropped attempt logs `attempt n/3 failed at connect|inbox` in the crm-api journal.

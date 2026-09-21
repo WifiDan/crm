@@ -4,6 +4,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import { InjectDatabase } from "../database/database.constants";
+import { MAX_ATTEMPTS, withImapRetry } from "./imap-retry";
 import type { LgJobContext, LgJobHandler, LgJobResult } from "./job-handler";
 import {
 	buildMatchIndexes,
@@ -67,6 +68,8 @@ type Counters = {
 	answeredNew: number;
 	answeredThread: number;
 	answeredAddress: number;
+	/** How many connections the INBOX read took (1 = no retry). */
+	imapAttempts: number;
 };
 
 type ParsedMail = {
@@ -198,6 +201,7 @@ export class RepliesPollHandler implements LgJobHandler {
 			answeredNew: 0,
 			answeredThread: 0,
 			answeredAddress: 0,
+			imapAttempts: mailbox.attempts,
 		};
 		const seen = new Set<string>();
 		const crmReplies = new Set<string>();
@@ -386,16 +390,12 @@ export class RepliesPollHandler implements LgJobHandler {
 		}
 	}
 
-	private async fetchMailbox(opts: {
+	/** Test seam: the one place a real IMAP client is built. */
+	protected createClient(opts: {
 		host: string;
 		user: string;
 		pass: string;
-		since: Date;
-		ctx: LgJobContext;
-	}): Promise<{
-		inbox: { uid: number; source: Buffer }[];
-		sent: SentItem[] | null;
-	}> {
+	}): ImapFlow {
 		const client = new ImapFlow({
 			host: opts.host,
 			port: 993,
@@ -406,15 +406,82 @@ export class RepliesPollHandler implements LgJobHandler {
 		client.on("error", (err: unknown) => {
 			this.logger.warn(`imap connection error: ${String(err).slice(0, 140)}`);
 		});
-		await client.connect();
+		return client;
+	}
+
+	/** Test seam: retry timing. Production uses the defaults in imap-retry.ts. */
+	protected retryOptions(
+		signal: AbortSignal,
+	): Parameters<typeof withImapRetry>[1] {
+		return {
+			signal,
+			onRetry: ({ attempt, delayMs }) =>
+				this.logger.warn(
+					`replies.poll retrying in ${delayMs}ms after attempt ${attempt}/${MAX_ATTEMPTS}`,
+				),
+		};
+	}
+
+	/**
+	 * One try at the front half: a fresh connection, INBOX opened and read into memory. It has no
+	 * side effect outside its own socket (every database write in run() happens after fetchMailbox
+	 * returns), so a failed try is simply discarded and can be repeated from scratch.
+	 */
+	private async attemptInbox(
+		opts: {
+			host: string;
+			user: string;
+			pass: string;
+			since: Date;
+			ctx: LgJobContext;
+		},
+		attempt: number,
+	): Promise<{ client: ImapFlow; inbox: { uid: number; source: Buffer }[] }> {
+		const client = this.createClient(opts);
+		let phase = "connect";
 		try {
-			const inbox = await this.readInbox(client, opts);
+			await client.connect();
+			phase = "inbox";
+			return { client, inbox: await this.readInbox(client, opts) };
+		} catch (e) {
+			this.logger.warn(
+				`replies.poll attempt ${attempt}/${MAX_ATTEMPTS} failed at ${phase}: ${String(e).slice(0, 140)}`,
+			);
+			try {
+				client.close();
+			} catch {
+				// already closed
+			}
+			throw e;
+		}
+	}
+
+	private async fetchMailbox(opts: {
+		host: string;
+		user: string;
+		pass: string;
+		since: Date;
+		ctx: LgJobContext;
+	}): Promise<{
+		inbox: { uid: number; source: Buffer }[];
+		sent: SentItem[] | null;
+		attempts: number;
+	}> {
+		const {
+			value: { client, inbox },
+			attempts,
+		} = await withImapRetry(
+			(n) => this.attemptInbox(opts, n),
+			this.retryOptions(opts.ctx.signal),
+		);
+		try {
 			// A Sent-folder failure must not lose the INBOX ingest, but it is recorded as "not checked".
+			// It is NOT retried: it runs once, on the connection that already read the INBOX.
 			const sent = await this.readSent(client, opts).catch((e: unknown) => {
 				this.logger.warn(`sent folder unreadable: ${String(e).slice(0, 140)}`);
 				return null;
 			});
-			return { inbox, sent };
+			return { inbox, sent, attempts };
 		} finally {
 			// Cleanup is best-effort: the server may already have dropped us after a complete fetch.
 			try {
