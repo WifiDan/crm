@@ -58,7 +58,7 @@ export function useOldDashboard(port: number = OLD_DASHBOARD.reviewPort) {
 	};
 }
 
-export function MirrorFreshness() {
+export function MirrorFreshness({ writes = false }: { writes?: boolean }) {
 	const trpc = useTRPC();
 	const mirror = useQuery({
 		...trpc.leadgen.mirrorStatus.queryOptions(),
@@ -87,8 +87,9 @@ export function MirrorFreshness() {
 				<Badge variant="destructive">row count mismatch</Badge>
 			) : null}
 			<span className="text-muted-foreground">
-				Changes made in NocoDB show here after the next mirror run, up to 15
-				minutes. Read-only.
+				{writes
+					? "Lists read the mirror. A change you save here goes to NocoDB at once and shows in the lists after the next mirror run, up to 15 minutes."
+					: "Changes made in NocoDB show here after the next mirror run, up to 15 minutes. Read-only."}
 			</span>
 		</div>
 	);

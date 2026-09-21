@@ -152,3 +152,17 @@ Raw SQL is used because the filters live in the NocoDB JSON (`raw`) and Prisma's
 - The read-back adds one GET per write. Acceptable at human click rate.
 - Real NocoDB write path is not exercised (no prod writes allowed). It is covered by the HTTP stub and the read-only probe.
 - Complexity cap 62: pure helpers, small methods.
+
+## As built (Slice 2a, departures from the plan above)
+
+- **Extra app files.** `lead-actions-state.ts` (pure: overlay of the last saved result on a mirror row, the version the page sends back) and `request-id.ts` (a v4 id built from `getRandomValues`). Reason: the CRM is opened over plain http on the tailnet, where `crypto.randomUUID` does not exist. The helper is tested against the API's `z.uuid()`.
+- **`TriageTab` takes an optional `initialDecision`** (default `all`) so the empty-state test can still render the Undecided view.
+- **`DemoDetail` (Review) takes `applied` and `onApplied`.** The applied-result overlay lives in the tab so the list cards and the detail agree.
+- **`MirrorFreshness` takes `writes`.** Triage and Review say a saved change goes to NocoDB at once and the list catches up within 15 minutes. Ops keeps the read-only wording.
+- **Store.** `nocodbLeadStore(env, fetchImpl, timeoutMs)` so tests can inject a short timeout. `FetchLike` replaces `typeof fetch` so a guarded fetch can be passed.
+- **Slice 1 test replaced.** "keeps decisions out of Slice 1" asserted the absence of the buttons; it now asserts the decision panel is present and Verify is not.
+- **Live check** `test/leadgen-decision.live.ts` (crm_dev only, real Postgres, stub store) plus a READ-ONLY NocoDB probe behind a fetch that refuses any non-GET. Probe results are in the report, not here.
+- **Non-vacuous control added.** A first version of the eligibility probe passed with zero candidates. It now builds the "everything approved" table, runs the sender's own `buildCandidates` over all 757 real ISP rows, and compares that with the per-row check: 4 pass, 753 refused, 0 disagree.
+- **Arming rule copy on the page.** The page mirrors `armsSending` only to decide whether to show the confirm dialog. The server decides, and refuses an arming Approve without `confirmArm`.
+- **No fallback for `LEADGEN_DECISION_APPROVERS`**, as planned. `.env.example` documents it and `NOCODB_LEADS_WRITE_TOKEN`.
+- **Migration** `20260920120000_leadgen_lead_decision` is create-table only, applied to `crm_dev` only. `prisma migrate diff` against `crm_dev` reports no difference. Production is not migrated.

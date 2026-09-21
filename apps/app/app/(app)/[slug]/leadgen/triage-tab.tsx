@@ -7,6 +7,8 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTRPC } from "@/lib/trpc/client";
 import type { RouterOutputs } from "@/lib/trpc/types";
+import { type Applied, LeadActions } from "./lead-actions";
+import { effectiveLead } from "./lead-actions-state";
 import {
 	CONTROL_CLASS,
 	DecisionBadge,
@@ -41,9 +43,14 @@ const SORTS = [
 	{ value: "updatedAt", label: "Recently changed" },
 ] as const;
 
-export function TriageTab() {
+export function TriageTab({
+	initialDecision = "all",
+}: {
+	initialDecision?: Decision;
+}) {
 	const trpc = useTRPC();
-	const [decision, setDecision] = useState<Decision>("all");
+	const [decision, setDecision] = useState<Decision>(initialDecision);
+	const [applied, setApplied] = useState<Record<string, Applied>>({});
 	const [table, setTable] = useState<"" | "isp" | "gym">("");
 	const [campaignId, setCampaignId] = useState("");
 	const [marketId, setMarketId] = useState("");
@@ -83,7 +90,7 @@ export function TriageTab() {
 
 	return (
 		<div className="flex min-w-0 flex-col gap-3">
-			<MirrorFreshness />
+			<MirrorFreshness writes />
 			<div className="flex flex-wrap gap-2">
 				{DECISIONS.map((d) => (
 					<Button
@@ -187,7 +194,7 @@ export function TriageTab() {
 						{(list.data?.rows ?? []).map((r) => (
 							<li key={r.id}>
 								<ProspectCard
-									row={r}
+									row={effectiveLead(r, applied[r.id])}
 									active={r.id === selectedId}
 									onSelect={() => setSelectedId(r.id)}
 								/>
@@ -208,6 +215,8 @@ export function TriageTab() {
 						<ProspectDetail
 							id={selectedId}
 							row={selected}
+							applied={applied[selectedId]}
+							onApplied={(r) => setApplied((p) => ({ ...p, [r.leadId]: r }))}
 							onBack={() => setSelectedId(null)}
 						/>
 					) : (
@@ -281,17 +290,21 @@ function ProspectCard({
 function ProspectDetail({
 	id,
 	row,
+	applied,
+	onApplied,
 	onBack,
 }: {
 	id: string;
 	row: Row | null;
+	applied: Applied | undefined;
+	onApplied: (result: Applied) => void;
 	onBack: () => void;
 }) {
 	const trpc = useTRPC();
 	const old = useOldDashboard();
 	const detail = useQuery(trpc.leadgen.leadDetail.queryOptions({ id }));
-	const lead = detail.data ?? row;
-	if (!lead) {
+	const found = detail.data ?? row;
+	if (!found) {
 		return (
 			<div className="flex flex-col gap-2 rounded-md border border-border p-3 text-xs">
 				<Button
@@ -312,6 +325,7 @@ function ProspectDetail({
 			</div>
 		);
 	}
+	const lead = effectiveLead(found, applied);
 	const shot = lead.oldSite ? old.screenshot(lead.oldSite) : null;
 	const preview = lead.oldSite ? old.preview(lead.oldSite) : null;
 	return (
@@ -373,22 +387,21 @@ function ProspectDetail({
 				notes={detail.data?.notes ?? row?.notes ?? ""}
 				truncated={detail.data?.notesTruncated ?? row?.notesTruncated ?? false}
 			/>
-			<p className="text-[11px] text-muted-foreground">
-				Approve and reject are still done in the old dashboard until Slice 2.
-				{old.triage ? (
-					<>
-						{" "}
-						<a
-							className="underline"
-							href={old.triage}
-							target="_blank"
-							rel="noreferrer noopener"
-						>
-							Open prospect triage
-						</a>
-					</>
-				) : null}
-			</p>
+			<LeadActions
+				lead={{
+					id: lead.id,
+					table: lead.table,
+					businessName: lead.businessName,
+					decision: lead.decision,
+					decisionDate: lead.decisionDate,
+					version: lead.version,
+					doNotContact: detail.data?.doNotContact ?? false,
+					email: detail.data?.email ?? null,
+				}}
+				stage="triage"
+				applied={applied}
+				onApplied={onApplied}
+			/>
 		</div>
 	);
 }

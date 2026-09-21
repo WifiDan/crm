@@ -8,6 +8,8 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTRPC } from "@/lib/trpc/client";
 import type { RouterOutputs } from "@/lib/trpc/types";
+import { type Applied, LeadActions } from "./lead-actions";
+import { effectiveLead } from "./lead-actions-state";
 import {
 	CONTROL_CLASS,
 	DecisionBadge,
@@ -49,6 +51,7 @@ export function ReviewTab() {
 	const [q, setQ] = useState("");
 	const [page, setPage] = useState(1);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
+	const [applied, setApplied] = useState<Record<string, Applied>>({});
 	const search = useDebounced(q);
 
 	const list = useQuery({
@@ -83,7 +86,7 @@ export function ReviewTab() {
 
 	return (
 		<div className="flex min-w-0 flex-col gap-3">
-			<MirrorFreshness />
+			<MirrorFreshness writes />
 			<div className="flex flex-wrap gap-2">
 				{VIEWS.map((v) => (
 					<Button
@@ -145,7 +148,7 @@ export function ReviewTab() {
 						{rows.map((r) => (
 							<li key={r.id}>
 								<DemoCard
-									row={r}
+									row={effectiveLead(r, applied[r.id])}
 									active={r.id === selectedId}
 									onSelect={() => setSelectedId(r.id)}
 								/>
@@ -170,6 +173,8 @@ export function ReviewTab() {
 							key={selectedId}
 							id={selectedId}
 							row={selected}
+							applied={applied[selectedId]}
+							onApplied={(r) => setApplied((p) => ({ ...p, [r.leadId]: r }))}
 							hasPrev={index > 0}
 							hasNext={index >= 0 && index < rows.length - 1}
 							onPrev={() => step(-1)}
@@ -235,6 +240,8 @@ function DemoCard({
 export function DemoDetail({
 	id,
 	row,
+	applied,
+	onApplied,
 	hasPrev,
 	hasNext,
 	onPrev,
@@ -243,6 +250,8 @@ export function DemoDetail({
 }: {
 	id: string;
 	row: Row | null;
+	applied: Applied | undefined;
+	onApplied: (result: Applied) => void;
 	hasPrev: boolean;
 	hasNext: boolean;
 	onPrev: () => void;
@@ -254,7 +263,7 @@ export function DemoDetail({
 	const [pane, setPane] = useState<"new" | "old">("new");
 	const [showDraft, setShowDraft] = useState(false);
 	const detail = useQuery(trpc.leadgen.leadDetail.queryOptions({ id }));
-	const lead = detail.data ?? null;
+	const lead = detail.data ? effectiveLead(detail.data, applied) : null;
 	const demoUrl = lead?.demoUrl ?? row?.demoUrl ?? null;
 	const name = lead?.businessName ?? row?.businessName ?? "";
 
@@ -339,9 +348,17 @@ export function DemoDetail({
 			{detail.isPending ? (
 				<p className="text-xs text-muted-foreground">Loading details…</p>
 			) : null}
+			{lead ? (
+				<LeadActions
+					lead={lead}
+					stage="review"
+					applied={applied}
+					onApplied={onApplied}
+				/>
+			) : null}
 			<p className="text-[11px] text-muted-foreground">
-				Approve, verify, reject and rework are still done in the old dashboard
-				until Slice 2.
+				Inline demo editing, site audits and screenshots stay in the old
+				dashboard.
 				{old.home ? (
 					<>
 						{" "}

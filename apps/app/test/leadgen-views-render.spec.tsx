@@ -1,4 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -17,6 +19,8 @@ const identity = {
 	contact: "Pat",
 	campaign: "ISP facelift",
 	market: null,
+	version: "2026-09-20 14:31:07+00:00",
+	decisionDate: null,
 };
 
 const reviewRow = {
@@ -87,7 +91,16 @@ const failedUnit = {
 	result: "exit-code",
 };
 
+const approver = {
+	youAreApprover: true,
+	approversConfigured: true,
+	writeConfigured: true,
+	writeProblem: null,
+	tokenSource: "shared-with-mirror",
+};
+
 const FIXTURES: Record<string, unknown> = {
+	status: approver,
 	mirrorStatus: {
 		tables: [
 			{
@@ -231,6 +244,12 @@ const { ReviewTab, DemoDetail } = await import(
 );
 const { OpsTab } = await import("../app/(app)/[slug]/leadgen/ops-tab");
 
+import type { ActionLead } from "../app/(app)/[slug]/leadgen/lead-actions-state";
+
+const { LeadActions } = await import(
+	"../app/(app)/[slug]/leadgen/lead-actions"
+);
+
 function html(element: React.ReactElement): string {
 	const client = new QueryClient();
 	return renderToStaticMarkup(
@@ -260,7 +279,17 @@ describe("console", () => {
 });
 
 describe("Triage", () => {
-	const out = html(<TriageTab />);
+	const out = html(<TriageTab initialDecision="undecided" />);
+
+	test("opens on the All filter", () => {
+		const all = html(<TriageTab />);
+		const active = (label: string) =>
+			new RegExp(`data-variant="default"[^<]*>${label}`).test(all);
+		expect(active("All \\(491\\)")).toBe(true);
+		expect(active("Undecided")).toBe(false);
+		const undecided = html(<TriageTab initialDecision="undecided" />);
+		expect(/data-variant="default"[^<]*>Undecided/.test(undecided)).toBe(true);
+	});
 
 	test("says there is nothing left to triage instead of showing a blank list", () => {
 		expect(out).toContain("Nothing left to triage");
@@ -305,6 +334,8 @@ describe("Review detail, side by side and narrow", () => {
 		<DemoDetail
 			id="lead-1"
 			row={reviewRow as never}
+			applied={undefined}
+			onApplied={() => undefined}
 			hasPrev={false}
 			hasNext={true}
 			onPrev={() => undefined}
@@ -345,11 +376,11 @@ describe("Review detail, side by side and narrow", () => {
 		expect(out).toContain("Their current site");
 	});
 
-	test("keeps decisions out of Slice 1", () => {
-		for (const word of [">Approve<", ">Reject<", ">Rework<", ">Verify<"]) {
-			expect(out).not.toContain(word);
-		}
-		expect(out).toContain("still done in the old dashboard");
+	test("offers the decision panel, and no verify control", () => {
+		expect(out).toContain(">Approve for sending<");
+		expect(out).toContain(">Reject<");
+		expect(out).toContain(">Needs changes<");
+		expect(out).not.toContain(">Verify<");
 	});
 
 	test("shows the QA failure and marks the draft as not sent", () => {
@@ -390,5 +421,155 @@ describe("Ops", () => {
 
 	test("the wide tables scroll sideways instead of breaking the page", () => {
 		expect(out).toContain("overflow-x-auto");
+	});
+});
+
+const actionLead: ActionLead = {
+	id: "lead-1",
+	table: "isp",
+	businessName: "Alpha Plumbing",
+	decision: null,
+	decisionDate: null,
+	version: "2026-09-20 14:31:07+00:00",
+	sendApproved: false,
+	doNotContact: false,
+	email: "pat@alpha.example.com",
+};
+
+const actions = (
+	lead: Partial<typeof actionLead>,
+	stage: "triage" | "review",
+	status: Record<string, unknown> = approver,
+	applied?: unknown,
+) => {
+	FIXTURES.status = status;
+	try {
+		return html(
+			<LeadActions
+				lead={{ ...actionLead, ...lead }}
+				stage={stage}
+				applied={applied as never}
+				onApplied={() => undefined}
+			/>,
+		);
+	} finally {
+		FIXTURES.status = approver;
+	}
+};
+
+describe("decision actions", () => {
+	test("review stage on ISP: Approve sits behind a confirm dialog, with rework and the mirror note", () => {
+		const out = actions({}, "review");
+		expect(out).toContain(">Approve for sending</button>");
+		expect(out).not.toContain(">Approve</button>");
+		expect(out).toContain(">Reject</button>");
+		expect(out).toContain(">Needs changes</button>");
+		expect(out).toContain(">Request rework</button>");
+		expect(out).toContain("trails by up to 15 minutes");
+	});
+
+	test("the review Approve control is only reachable through the confirm dialog", () => {
+		const source = readFileSync(
+			join(import.meta.dir, "../app/(app)/[slug]/leadgen/lead-actions.tsx"),
+			"utf8",
+		);
+		expect(source).toMatch(
+			/<ApproveForSending[\s\S]*?onConfirm=\{\(\) => send\("Approved"\)\}/,
+		);
+		expect(source).toMatch(/arming \? \(\s*<ApproveForSending/);
+		expect(source).toContain('confirmArm: arming && decision === "Approved"');
+		expect((source.match(/send\("Approved"\)/g) ?? []).length).toBe(2);
+	});
+
+	test("triage stage: plain Approve, and it says it sends nothing", () => {
+		const out = actions({}, "triage");
+		expect(out).toContain(">Approve</button>");
+		expect(out).not.toContain("Approve for sending");
+		expect(out).not.toContain("Request rework");
+		expect(out).toContain("does not send anything");
+	});
+
+	test("gym review: no confirm, no rework, manual sends", () => {
+		const out = actions({ table: "gym" }, "review");
+		expect(out).toContain(">Approve</button>");
+		expect(out).not.toContain("Request rework");
+		expect(out).toContain("Gym sends stay manual");
+	});
+
+	test("a do-not-contact lead has every action disabled", () => {
+		const out = actions({ doNotContact: true }, "review");
+		expect(out).toContain("do not contact");
+		const buttons =
+			out.match(
+				/<button[^<]*>(Approve for sending|Reject|Needs changes|Request rework)</g,
+			) ?? [];
+		expect(buttons.length).toBeGreaterThan(0);
+		for (const b of buttons) expect(b).toContain("disabled");
+	});
+
+	test("a lead with no mirror version cannot be acted on", () => {
+		const out = actions({ version: null }, "review");
+		expect(out).toContain("no version in the mirror");
+	});
+
+	test("an account outside the allowlist gets no buttons", () => {
+		const out = actions({}, "review", { ...approver, youAreApprover: false });
+		expect(out).toContain("may not make lead decisions");
+		expect(out).not.toContain(">Reject</button>");
+	});
+
+	test("switched off, and unable to write, both say so and show no buttons", () => {
+		const off = actions({}, "review", {
+			...approver,
+			youAreApprover: false,
+			approversConfigured: false,
+		});
+		expect(off).toContain("switched off");
+		const nowrite = actions({}, "review", {
+			...approver,
+			writeConfigured: false,
+			writeProblem: "no NocoDB token is set",
+		});
+		expect(nowrite).toContain("no NocoDB token is set");
+		expect(nowrite).not.toContain(">Reject</button>");
+	});
+
+	test("after a save the list shows NocoDB's answer and says the mirror trails", () => {
+		const out = actions({}, "review", approver, {
+			auditId: "a1",
+			replay: false,
+			leadId: "lead-1",
+			action: "DECISION",
+			decision: "Approved",
+			sendApproved: true,
+			decisionDate: "2026-09-20",
+			version: "2026-09-20 15:04:06+00:00",
+			reworkRequested: false,
+			appliedAt: "2026-09-20T15:04:06.000Z",
+		});
+		expect(out).toContain("send approved");
+		expect(out).toContain("Saved to NocoDB");
+		expect(out).toContain("after the next mirror run");
+	});
+
+	test("an older applied change never hides a newer mirror row", () => {
+		const out = actions(
+			{ decision: "Rejected", version: "2026-09-20 16:00:00+00:00" },
+			"review",
+			approver,
+			{
+				auditId: "a1",
+				replay: false,
+				leadId: "lead-1",
+				action: "DECISION",
+				decision: "Approved",
+				sendApproved: true,
+				decisionDate: "2026-09-20",
+				version: "2026-09-20 15:04:06+00:00",
+				reworkRequested: false,
+				appliedAt: "2026-09-20T15:04:06.000Z",
+			},
+		);
+		expect(out).not.toContain("send approved</span>");
 	});
 });

@@ -29,7 +29,10 @@ export interface LeadRowStore {
 }
 
 type Env = Record<string, string | undefined>;
-type Fetch = typeof fetch;
+export type FetchLike = (
+	input: string | URL | Request,
+	init?: RequestInit,
+) => Promise<Response>;
 
 const DEFINITE_CODES = new Set([
 	"ECONNREFUSED",
@@ -49,7 +52,7 @@ function resolveConfig(env: Env) {
 
 export function nocodbLeadStore(
 	env: Env,
-	fetchImpl: Fetch = fetch,
+	fetchImpl: FetchLike = fetch,
 	timeoutMs: number = NOCODB_TIMEOUT_MS,
 ): LeadRowStore {
 	const settings = () => {
