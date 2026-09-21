@@ -2,7 +2,7 @@
 
 Written before the 2b code, as `spec-slice2b.md` Step 0 requires. Sources read line by line: `approval-queue/review-server.js` (595 lines), `dashboard.html` (303), `prospects.html` (237), `site-generator/deploy_and_link.js`, `deploy-demo.sh`. The ops dashboard (port 8768) is in `ops-feature-table.md`.
 
-Status vocabulary: **S1** built in Slice 1, **2a** built in Slice 2a, **2b** to build in this slice, **BLOCKED** to build in 2b but the host cannot run it (see the last section), **DROPPED** intentionally dropped, with a reason Danio can overrule. A "changed" row is built, but behaves differently on purpose.
+Status vocabulary: **S1** built in Slice 1, **2a** built in Slice 2a, **2b** built in this slice (status as built, updated at the end of the work), **DROPPED** intentionally dropped, with a reason Danio can overrule. A "changed" row is built, but behaves differently on purpose.
 
 ## A. Endpoints in `review-server.js`
 
@@ -15,7 +15,7 @@ Status vocabulary: **S1** built in Slice 1, **2a** built in Slice 2a, **2b** to 
 | A5 | `POST /api/save/<slug>` | Save edited demo HTML | `leadgenDemos.save` | 2b |
 | A6 | `POST /api/decision` | Approve / Reject / Needs Changes | `leadgenDecisions.decide` | 2a |
 | A7 | `POST /api/rework` | Rework request with notes | `leadgenDecisions.rework` | 2a |
-| A8 | `GET /api/shot?url=` | PNG screenshot of their site, disk cache, 14 day TTL | Screenshot service keyed by lead id | **BLOCKED** (host lacks system libraries) |
+| A8 | `GET /api/shot?url=` | PNG screenshot of their site, disk cache, 14 day TTL | `leadgenShots.capture` / `status` (lead id) and `GET /api/leadgen/shot/<lead id>` (cached PNG, session) | 2b. Same 14-day TTL, 1280x900 viewport, 3 at a time. Old check `size > 1000` also accepted Chrome's own error page; the new driver refuses a navigation that errored |
 | A9 | `GET /old/?u=` | Fetch any URL, re-serve as same-origin HTML with `<base>` | Not ported | **DROPPED** (see D1) |
 | A10 | `GET /api/audit-site?url=` | Score their site 0-100 with signals | `leadgenAudit.run` (takes a lead id) | 2b |
 | A11 | `GET /demo/<path>` | Serve local demo files same-origin (editable iframe) | `GET /api/leadgen/demo-preview/<token>/<slug>/...` | 2b (changed: signed link, sandboxed, see plan) |
@@ -66,7 +66,7 @@ Status vocabulary: **S1** built in Slice 1, **2a** built in Slice 2a, **2b** to 
 | C4 | Count "N of M" | S1 | |
 | C5 | Row: name, pool tag, quality score pill (<30 red, <60 amber, else green), decision tag, source | S1 | |
 | C6 | Detail: name, service, address, contact, phone, notes | S1 | |
-| C7 | Their site as a screenshot, "re-capture" link, "could not capture" fallback text | BLOCKED | A8 |
+| C7 | Their site as a screenshot, "re-capture" link, "could not capture" fallback text | 2b | On Triage and Review. Auto-captures on first view, Re-capture button (served from cache if the picture is under a minute old), plain text when it cannot capture |
 | C8 | Open their site in a new tab | S1 | |
 | C9 | Approve - worth building / Reject - skip | 2a | Triage stage: never arms sending |
 | C10 | Audit button | 2b | |
@@ -78,7 +78,7 @@ Status vocabulary: **S1** built in Slice 1, **2a** built in Slice 2a, **2b** to 
 
 | # | What | Reason | If you want it |
 | --- | --- | --- | --- |
-| D1 | `/old/` same-origin proxy of their site (A9, B21) | It is an authenticated open fetcher that re-serves foreign HTML on the CRM origin. The spec forbids porting it. The replacement is the screenshot (blocked, see below), the link out, and the Slice 1 opt-in sandboxed frame. While the old dashboard runs, the "Preview (old dashboard)" link still works | Not recommended |
+| D1 | `/old/` same-origin proxy of their site (A9, B21) | It is an authenticated open fetcher that re-serves foreign HTML on the CRM origin. The spec forbids porting it. The replacement is the screenshot, the link out, and the Slice 1 opt-in sandboxed frame. The "Preview (old dashboard)", "Screenshot (old dashboard)" and "Open the review dashboard" links that Slice 1 and 2a put on the CRM pages are removed in 2b, so nothing in the CRM points at ports 8767/8768 any more (only the Ops tab's own helper constants remain, unused) | Not recommended |
 | D2 | Confirm prompt on Reject (B14) | Decided in the 2a spec | One line in `lead-actions.tsx` |
 | D3 | Wrap-around Previous/Next (B3) and v2-first ordering (B4) | The list is server-paged | Add a "v2 first" sort |
 | D4 | "Retry" button on load failure (C13) | The query layer already retries | Small |
@@ -87,6 +87,6 @@ Status vocabulary: **S1** built in Slice 1, **2a** built in Slice 2a, **2b** to 
 
 Audit takes a lead id, not a URL. Save is refused unless the file is unchanged since the page loaded. Backups live outside the deployed folder (old flow put `index.<time>.bak.html` inside the folder that `deploy-demo.sh` publishes, so every backup would go public on the next deploy). Only the last 10 backups per slug are kept. Every save has an audit row.
 
-## F. BLOCKED: screenshots
+## F. Screenshots (was blocked, then unblocked by the coordinator)
 
-`chrome-headless-shell` 153.0.8010.52 was installed for the `danio` user under `~/.cache/leadgen-browser` from the official Chrome for Testing source. It does not start: nine system libraries are missing and installing them needs root. Per the spec this feature is stopped and reported. Details and the exact package list are in plan.md and the final report. Everything the screenshot feature would sit on (lead-id-only endpoints, the SSRF guard) is built for the audit and is ready for it.
+The first attempt installed `chrome-headless-shell` 153.0.8010.52 for the `danio` user and it would not start: nine system libraries were missing and installing them needs root. The coordinator then allowed a rootless install: `apt-get download` of the missing libraries and `dpkg -x` into `~/.cache/leadgen-browser/libs`, with `LD_LIBRARY_PATH` set only for the browser child process. That worked (12 packages). What was installed, where, how big, and the residual risk are in plan.md.

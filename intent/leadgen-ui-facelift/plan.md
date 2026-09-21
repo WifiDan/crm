@@ -181,7 +181,7 @@ Raw SQL is used because the filters live in the NocoDB JSON (`raw`) and Prisma's
 - **Cookies do not reach a sandboxed frame's subresources.** A sandboxed document without `allow-same-origin` has an opaque origin, so its image/CSS requests to the CRM origin are cross-site and the session cookie is not sent. A cookie-authenticated `/demo/` route would therefore break every asset. 2b serves demo files from a signed, short-lived link minted by a session-only tRPC call (below).
 - **Everything is one origin.** The browser reaches only the Next app (`/api/[...path]` proxies to the API). Demo files therefore arrive on the CRM origin, so the sandbox must be enforced by the response headers as well as the iframe attribute.
 - **Bun honours `lookup`** on `node:http(s).request` (checked on Joshua: bun 1.3.12 and node 22 both call it). That lets the SSRF guard pin the connection to the address it validated, which closes DNS rebinding.
-- **Screenshots cannot run on Joshua without root.** See "Screenshots" below.
+- **Screenshots first looked blocked** (missing system libraries) and were later built with a rootless install; see the as-built section.
 
 ## Sandbox design (the part that matters)
 
@@ -212,7 +212,7 @@ Raw SQL is used because the filters live in the NocoDB JSON (`raw`) and Prisma's
 - `demo-local-pane.tsx`: "Local copy" view in the Review demo pane: sandboxed frame, edit toggle, Save, status ("Saved locally, not yet live", deploy command, backup name), refresh link when the token expires.
 - `site-audit-panel.tsx`: Audit button + result (priority colour, score, signals) used by Review and Triage.
 - Review and Triage: auto-advance to the next card after a saved decision; the "editing and audits stay in the old dashboard" note is replaced.
-- Screenshots: not built (blocked).
+- `site-shot-panel.tsx`: cached screenshot with Re-capture, used by Review and Triage. (First written as blocked, then built after the coordinator allowed a rootless browser install; see as-built.)
 
 ## Order of work
 
@@ -238,3 +238,58 @@ Raw SQL is used because the filters live in the NocoDB JSON (`raw`) and Prisma's
 - Real-browser behaviour of the sandbox, the bridge and CORP/CORS on assets is not testable here (no runnable browser). It is covered by header assertions and a bridge test against a fake window, and reported as NOT verified.
 - The audit fetch must not be a way into the tailnet: see "Residual SSRF risk" in the as-built section.
 - Complexity cap 62: pure helpers.
+
+## As built (Slice 2b, departures from the plan above)
+
+**Screenshots were built.** The plan above said "not built (blocked)". The first install of the browser would not start (nine missing libraries, root needed). The coordinator then allowed a rootless fix, so the feature was built and is live-tested. Everything below about the browser is what was actually done.
+
+### What was installed for screenshots (all under `~/.cache/leadgen-browser`, user `danio`, no sudo, no `apt install`)
+
+| Item | Detail |
+| --- | --- |
+| Browser | `chrome-headless-shell` 153.0.8010.52 (Chrome for Testing, Stable), from `storage.googleapis.com/chrome-for-testing-public/153.0.8010.52/linux64/chrome-headless-shell-linux64.zip`. The source publishes no checksum file; Google Cloud Storage sends an `x-goog-hash: md5=` header and the downloaded file matched it (md5 `2d32adf1c0bcaf66602c32faa645749a`). sha256 recorded: `944dc1eae654637fed4d57650198774f9c43b45f34e48febb84f43c541b5de76`. Zip 119,702,187 bytes, unpacked 261 MB, in `chrome-headless-shell/linux-153.0.8010.52/`. |
+| Libraries | 12 Ubuntu 26.04 packages fetched with `apt-get download` (apt checks the archive signatures; the trusted keys are Ubuntu's own) and unpacked with `dpkg -x` into `libs/` (2.5 MB; the `.deb` files, 784 KB, stay in `debs/`): libasound2t64 1.2.15.3-1ubuntu1.1, libatk-bridge2.0-0t64 2.60.4-0ubuntu0.1, libatk1.0-0t64 2.60.4-0ubuntu0.1, libatspi2.0-0t64 2.60.4-0ubuntu0.1, libgbm1 26.0.8-1ubuntu0.3, libxcomposite1 1:0.4.6-1build1, libxdamage1 1:1.1.7-1, libxfixes3 1:6.0.0-2build2, libxi6 2:1.8.2-2, libxrandr2 2:1.5.4-1build1, libxrender1 1:0.9.12-1build1, libxres1 2:1.2.1-1build2. The last three were transitive (found by `ldd` after the first nine). |
+| Total | 264 MiB under `~/.cache/leadgen-browser` (270,220 KB). |
+| Launch shape | `chrome-headless-shell --headless --disable-gpu --hide-scrollbars --no-sandbox --disable-dev-shm-usage --disable-extensions --disable-background-networking --disable-sync --disable-default-apps --disable-component-update --no-first-run --mute-audio --remote-debugging-port=0 --window-size=1280,900 --user-data-dir=<fresh temp dir> about:blank`, spawned with an environment of exactly `PATH`, `HOME` (the temp dir), `LANG` and `LD_LIBRARY_PATH` (the two library folders). `LD_LIBRARY_PATH` exists only in that child's environment; a test fails if any file sets it on the API process. The API's own environment (database URL, tokens) is never handed to the browser. |
+| `--no-sandbox` | Needed because the user namespace sandbox is not available to this rootless install. Acceptable here only because the browser is started for one address the SSRF guard already validated (a lead's own public website), runs headless with a throwaway profile, and is killed after each capture. Residual risk below. |
+| Live proof | A real capture of `https://elitesystemsdesign.com` (562,452 byte PNG, HTTP 200, 2.8 s). A non-existent host is refused ("could not resolve") and no picture is cached; the first raw run showed why this matters: the old code's `size > 1000` check would have cached Chrome's 5,289-byte "site can't be reached" page as if it were their site. |
+
+### Screenshot design
+
+Endpoints take a lead id. `leadgenShots.capture` looks up that lead's website, checks it with the same guard as the audit, then drives the browser over the DevTools protocol (a WebSocket to the browser the API itself started, on 127.0.0.1, no HTTP fetch). Before navigating it turns on a request filter: any request to a non-public literal address, an internal host name, or a non-http(s)/data/blob scheme is failed by the browser. After the page loads, every document response (main frame, redirects, iframes) must have come from a public address, or the picture is discarded and never taken. A navigation error is a failure, not a picture. Pictures are cached under `LEADGEN_SHOT_CACHE_DIR` (default `/data/leadgen/crm-shots`), named `<lead id>.<sha1 of the URL, 10 chars>.png`, 14 days, at most 400 files or 300 MB, oldest evicted, one picture per lead. A forced re-capture inside 60 seconds is answered from the cache. Three browsers at most; two viewers of the same lead share one browser. If a re-capture fails and an older picture exists, the older one is shown with a note. The image reaches the page through `GET /api/leadgen/shot/<lead id>`, which needs a session, takes no URL, and only reads the cache.
+
+### Residual SSRF risk (plainly)
+
+- **Audit (`leadgenAudit.run`).** The connection is pinned to the address the guard validated (so DNS rebinding cannot swap it), every redirect hop is re-checked, the cap is 5 hops, 2 MB and 10 s. The port is not restricted: any port on a public address can be probed, which only matters if a lead's website is set to point somewhere hostile, and the response is never shown. Compressed bodies are capped after decompression. Risk left: low.
+- **Screenshots.** The browser resolves DNS itself. The guard resolves the name once before launching; the browser may resolve it again, so a hostile name could answer differently the second time. Literal addresses, known internal names and every redirect/frame that reports a private address are caught (blocked before, or discarded after). A sub-resource (an image or script) on a public-looking name that resolves to a private address is not caught: the browser would make one blind GET to it and nothing from the response reaches the user. Closing that fully needs a network namespace or an egress proxy, which needs root. Second, the browser runs without its own sandbox: a hostile page that exploits Chrome would run as `danio`. The mitigations are a current Chrome, a throwaway profile, a stripped environment, no extensions, and a kill after each capture. Risk left: medium-low, and it is the reason this feature is the one to review first.
+
+### Where the spec was silent, and what was chosen
+
+1. **Build records.** `lg_build` is empty and `manifest.json` names 2 of the 75 output folders. A "build record" is the lead's own mirrored Demo Site URL: its slug, resolved with the existing prefix rule, must name an existing folder holding `index.html`. Nothing takes a slug or path from the caller.
+2. **Demo file access is a signed link, not the session cookie.** A sandboxed frame has an opaque origin, so its image and CSS requests do not carry the session cookie (confirmed in Chrome: the page request carried it, the asset requests did not). The link is minted by a session-only, no-REST tRPC call, lasts 15 minutes, names one folder, and is signed with a key made at API start (a restart invalidates links; no secret is stored). The route is the one `@AllowAnonymous()` in the leadgen module and is read-only. Anyone holding a live link can read that demo's files, which are the same files the public Cloudflare copy serves.
+3. **Backups.** Kept outside the deployed folder, in `LEADGEN_DEMO_BACKUP_DIR/<slug>/`, named `index.<ISO time with : and . as ->.bak.html` as before. The last 10 are kept per demo. Pruning removes only names matching the exact pattern.
+4. **Stale-file check.** The page sends the hash of the file it loaded. A save is refused (409) if the file changed since, for example after a rebuild or an edit in the old dashboard.
+5. **Old-dashboard links removed** from the CRM pages (Preview, Screenshot, Open the review dashboard) and the helper code deleted, so retiring ports 8767/8768 leaves no dead link. A test pins it.
+6. **Audit input normalisation.** The audit uses the same `safeHttpUrl` the pages already use, so a website stored without `https://` is audited over https. The old code answered `400 bad url` for that. A lead with no usable website still gets `bad url`.
+7. **Audit truncation.** A page over 2 MB is scored on its first 2 MB (the old code read it all). Not observed on any real site.
+8. **Auto-advance** after a saved decision moves to the next card, else the previous one.
+9. **Editing needs the decision allowlist** (`LEADGEN_DECISION_APPROVERS`). Viewing the local copy and running an audit or screenshot needs only a session.
+
+### Audit port, quirks recorded (not fixed)
+
+- The WordPress check in the old code is `html.includes('wp-content') && html.includes('Genesis') || html.includes('Divi')`. `&&` binds tighter than `||`, so the word "Divi" alone triggers the signal. The port keeps that behaviour (written with explicit brackets that mean the same thing) and a test pins it.
+- `startsWith('https')` is case sensitive and looks at the address as given, not the final address after redirects. Kept. `HTTPS://x` scores as "HTTP only".
+- The copyright regex accepts `2010-`, `2015&` and `&copy; 2012`, not `(c)` or the character (c). Kept.
+- Equality with the old handler is proved by running the real `review-server.js` audit block in a `vm` against 1,754 generated pages (exhaustive over which signals are present, plus a seeded random set). Breaking a weight, a threshold, the precedence, or the year fallback each turns it red.
+
+### How an edited demo reaches the live URL (summary of the finding above)
+
+It does not. Save writes the local file only and the UI says "Saved locally, not yet live" and prints `cd /data/leadgen/site-generator && bash deploy-demo.sh <slug>`. Cloudflare changes only when that runs (by hand, or in the nightly job for a demo it just built or reworked, which replaces the local file and so also discards the edit). Deploying republishes the same alias URL that leads already have, so it changes what an emailed lead sees. No auto-redeploy was added. The page cannot tell whether a later deploy happened, so it never says "live".
+
+### Tests that exist now (and were shown able to fail)
+
+API: 802 tests in `test/leadgen-*.spec.ts` across 27 files (514 across 19 files at 9896ad4, so 288 are new). New: SSRF guard (87), audit port and old-code equality (9), audit service (12), demo files and tokens and bridge (66), demo edit service and preview route (34), shots (44), structural door (29), preview route through Nest + helmet (7). Live scripts, run once: `leadgen-demo-edit.live.ts` (crm_dev, temp output dir, 11 checks), `leadgen-outbound.live.ts` (real resolver, one public URL, real browser, loopback trap server that saw 0 requests, 20 checks), `leadgen-demo-sandbox.live.ts` (real Chrome, 15 checks; a naive same-origin variant fails 8 of them). App: 234 tests. Break-on-purpose runs were done for every guard listed in the final report.
+
+### Before any deploy
+
+Apply migration `20260921000000_leadgen_demo_edit` to production (create table only; it is applied to `crm_dev` only and `prisma migrate diff` shows 0 drift there and exit 2 against prod, as expected). Keep `LEADGEN_DECISION_APPROVERS` set. The API user needs write access to `/data/leadgen` for the two new folders (created on first use). The service must run with `HOME=/home/danio` so the browser is found (check `leadgenShots.status` says `available`).
