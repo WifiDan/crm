@@ -2153,3 +2153,42 @@ model LgSendShadowRun {
 
   @@map("lg_send_shadow_run")
 }
+
+enum LgDecisionAction {
+  DECISION
+  REWORK
+}
+
+enum LgDecisionStatus {
+  PENDING
+  APPLIED
+  FAILED
+  UNKNOWN
+}
+
+model LgLeadDecision {
+  id               String           @id @default(cuid())
+  requestId        String           @unique
+  action           LgDecisionAction
+  actorId          String
+  actorEmail       String?
+  leadId           String
+  nocodbTable      String
+  nocodbRowId      Int
+  stage            String?
+  decision         String?
+  notes            String?
+  prevDecision     String?
+  prevSendApproved Boolean?
+  prevVersion      String?
+  patch            Json
+  status           LgDecisionStatus @default(PENDING)
+  outcome          String?
+  result           Json?
+  createdAt        DateTime         @default(now())
+  completedAt      DateTime?
+
+  @@index([leadId, createdAt])
+  @@index([status])
+  @@map("lg_lead_decision")
+}
