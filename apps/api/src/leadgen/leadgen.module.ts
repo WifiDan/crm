@@ -1,5 +1,15 @@
 import { Module } from "@nestjs/common";
 import { TrpcModule } from "../trpc/trpc.module";
+import {
+	defaultDemoDirs,
+	LG_DEMO_CLOCK,
+	LG_DEMO_DIRS,
+	LG_PREVIEW_KEY,
+} from "./demo-edit.config";
+import { DemoEditRouter } from "./demo-edit.router";
+import { DemoEditService } from "./demo-edit.service";
+import { DemoPreviewController } from "./demo-preview.controller";
+import { DemoPreviewService, newPreviewKey } from "./demo-preview.service";
 import { LG_JOB_HANDLERS } from "./job-handler";
 import { LgJobSchedulerService } from "./job-scheduler.service";
 import { LeadDecisionRouter } from "./lead-decision.router";
@@ -30,9 +40,19 @@ import {
 	smtpTransportFromEnv,
 } from "./reply-send.service";
 import { SendlogSyncHandler } from "./sendlog-sync.handler";
+import { ShotController } from "./shot.controller";
+import { ShotRouter } from "./shot.router";
+import {
+	defaultShotEnv,
+	LeadgenShotService,
+	LG_SHOT_ENV,
+} from "./shot.service";
+import { SiteAuditRouter } from "./site-audit.router";
+import { SiteAuditService } from "./site-audit.service";
 
 @Module({
 	imports: [TrpcModule],
+	controllers: [DemoPreviewController, ShotController],
 	providers: [
 		NocodbMirrorHandler,
 		SendlogSyncHandler,
@@ -87,6 +107,17 @@ import { SendlogSyncHandler } from "./sendlog-sync.handler";
 		{ provide: LG_DECISION_CLOCK, useValue: defaultDecisionClock },
 		LeadDecisionService,
 		LeadDecisionRouter,
+		SiteAuditService,
+		SiteAuditRouter,
+		{ provide: LG_DEMO_DIRS, useFactory: () => defaultDemoDirs(process.env) },
+		{ provide: LG_PREVIEW_KEY, useFactory: newPreviewKey },
+		{ provide: LG_DEMO_CLOCK, useValue: () => new Date() },
+		DemoPreviewService,
+		DemoEditService,
+		DemoEditRouter,
+		{ provide: LG_SHOT_ENV, useFactory: () => defaultShotEnv(process.env) },
+		LeadgenShotService,
+		ShotRouter,
 	],
 	exports: [LgJobSchedulerService, LeadgenService],
 })
