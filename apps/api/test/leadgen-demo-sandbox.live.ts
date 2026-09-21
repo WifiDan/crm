@@ -123,7 +123,6 @@ const dom = await new Promise<string>((resolve, reject) => {
 		[
 			"--headless",
 			"--disable-gpu",
-			"--no-sandbox",
 			"--disable-dev-shm-usage",
 			`--user-data-dir=${join(root, "profile")}`,
 			"--virtual-time-budget=8000",

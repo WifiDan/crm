@@ -16,7 +16,7 @@ export const SHOT_LIMITS = {
 
 export class ShotError extends Error {
 	constructor(
-		readonly kind: "refused" | "failed" | "unavailable",
+		readonly kind: "refused" | "failed" | "unavailable" | "sandbox",
 		message: string,
 	) {
 		super(message);
@@ -135,7 +135,12 @@ export type Launched = {
 	stop: () => Promise<void>;
 };
 
-export type Launcher = (install: BrowserInstall) => Promise<Launched>;
+export type LaunchOptions = { noSandbox?: boolean };
+
+export type Launcher = (
+	install: BrowserInstall,
+	options?: LaunchOptions,
+) => Promise<Launched>;
 
 export type Connector = (wsUrl: string) => Promise<CdpConnection>;
 
@@ -153,7 +158,6 @@ const CHROME_ARGS = [
 	"--headless",
 	"--disable-gpu",
 	"--hide-scrollbars",
-	"--no-sandbox",
 	"--disable-dev-shm-usage",
 	"--disable-extensions",
 	"--disable-background-networking",
@@ -167,7 +171,24 @@ const CHROME_ARGS = [
 	"about:blank",
 ];
 
-export const spawnBrowser: Launcher = async (install) => {
+export const SANDBOX_FAILURE = "browser sandbox could not start; see plan.md";
+
+const SANDBOX_SIGNS =
+	/No usable sandbox|zygote_host_impl_linux|sandbox_host_linux|setuid sandbox|namespace sandbox/i;
+
+export const looksLikeSandboxFailure = (stderr: string): boolean =>
+	SANDBOX_SIGNS.test(stderr);
+
+export function browserArgs(profile: string, noSandbox: boolean): string[] {
+	return [
+		...CHROME_ARGS.slice(0, 3),
+		...(noSandbox ? ["--no-sandbox"] : []),
+		...CHROME_ARGS.slice(3),
+		`--user-data-dir=${profile}`,
+	];
+}
+
+export const spawnBrowser: Launcher = async (install, options = {}) => {
 	const profile = await mkdtemp(join(tmpdir(), "leadgen-shot-"));
 	const env: Record<string, string> = {
 		PATH: "/usr/bin:/bin",
@@ -177,7 +198,7 @@ export const spawnBrowser: Launcher = async (install) => {
 	};
 	const child: ChildProcess = spawn(
 		install.binary,
-		[...CHROME_ARGS, `--user-data-dir=${profile}`],
+		browserArgs(profile, options.noSandbox === true),
 		{ env: env as NodeJS.ProcessEnv, stdio: ["ignore", "ignore", "pipe"] },
 	);
 	const exited = new Promise<void>((resolve) => {
@@ -193,8 +214,17 @@ export const spawnBrowser: Launcher = async (install) => {
 	try {
 		const wsUrl = await new Promise<string>((resolve, reject) => {
 			let seen = "";
+			const startFailure = () =>
+				looksLikeSandboxFailure(seen)
+					? new ShotError("sandbox", SANDBOX_FAILURE)
+					: new ShotError("failed", "the browser exited on start");
 			const timer = setTimeout(
-				() => reject(new ShotError("failed", "the browser did not start")),
+				() =>
+					reject(
+						looksLikeSandboxFailure(seen)
+							? startFailure()
+							: new ShotError("failed", "the browser did not start"),
+					),
 				SHOT_LIMITS.launchMs,
 			);
 			child.stderr?.on("data", (chunk: Buffer) => {
@@ -207,7 +237,7 @@ export const spawnBrowser: Launcher = async (install) => {
 			});
 			child.once("exit", () => {
 				clearTimeout(timer);
-				reject(new ShotError("failed", "the browser exited on start"));
+				reject(startFailure());
 			});
 			child.once("error", (e) => {
 				clearTimeout(timer);
@@ -319,6 +349,7 @@ function trackNavigation(cdp: CdpConnection, sessionId: string): Recorded {
 
 export type CaptureDeps = {
 	launch?: Launcher;
+	noSandbox?: boolean;
 	connect?: Connector;
 	sleep?: (ms: number) => Promise<void>;
 };
@@ -331,7 +362,9 @@ export async function captureScreenshot(
 	const launch = deps.launch ?? spawnBrowser;
 	const connect = deps.connect ?? connectWebSocket;
 	const wait = deps.sleep ?? sleep;
-	const launched = await launch(install);
+	const launched = await launch(install, {
+		noSandbox: deps.noSandbox === true,
+	});
 	let cdp: CdpConnection | null = null;
 	const overall = setTimeout(() => {
 		void launched.stop();

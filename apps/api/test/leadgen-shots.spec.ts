@@ -4,6 +4,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
+	readFileSync,
 	rmSync,
 	utimesSync,
 	writeFileSync,
@@ -18,15 +19,22 @@ import {
 	ServiceUnavailableException,
 } from "@nestjs/common";
 import type { Resolver } from "../src/leadgen/outbound-guard";
-import { LeadgenShotService, type ShotEnv } from "../src/leadgen/shot.service";
+import {
+	defaultShotEnv,
+	LeadgenShotService,
+	type ShotEnv,
+} from "../src/leadgen/shot.service";
 import {
 	allowRequest,
+	browserArgs,
 	type CdpConnection,
 	type CdpMessage,
 	captureScreenshot,
 	findBrowser,
 	type Launcher,
+	looksLikeSandboxFailure,
 	ShotError,
+	spawnBrowser,
 	verifyChain,
 } from "../src/leadgen/shot-browser";
 import {
@@ -638,5 +646,191 @@ describe("the screenshot service", () => {
 		expect((err as HttpException).getStatus()).toBe(429);
 		release();
 		await Promise.all(running);
+	});
+});
+
+describe("the browser sandbox is on by default and fails closed", () => {
+	test("the default argument list has no --no-sandbox, and it is added only when asked", () => {
+		expect(browserArgs("/p", false)).not.toContain("--no-sandbox");
+		expect(browserArgs("/p", true)).toContain("--no-sandbox");
+		expect(browserArgs("/p", false)).toContain("--user-data-dir=/p");
+		expect(
+			browserArgs("/p", true).filter((a) => a === "--no-sandbox").length,
+		).toBe(1);
+	});
+
+	test("the environment switch counts only when it is exactly yes", () => {
+		for (const value of [
+			undefined,
+			"",
+			"no",
+			"YES",
+			"Yes",
+			"true",
+			"1",
+			" yes",
+			"yes ",
+		])
+			expect(
+				defaultShotEnv({ LEADGEN_BROWSER_NO_SANDBOX: value }).noSandbox,
+			).toBe(false);
+		expect(
+			defaultShotEnv({ LEADGEN_BROWSER_NO_SANDBOX: "yes" }).noSandbox,
+		).toBe(true);
+		expect(defaultShotEnv({}).noSandbox).toBe(false);
+	});
+
+	test("the shot-browser source hard-codes no-sandbox in one place only: the opt-in branch", () => {
+		const code = readFileSync(
+			join(import.meta.dir, "../src/leadgen/shot-browser.ts"),
+			"utf8",
+		);
+		expect((code.match(/--no-sandbox/g) ?? []).length).toBe(1);
+		expect(code).toMatch(/noSandbox \? \["--no-sandbox"\] : \[\]/);
+	});
+
+	test("sandbox failure text is recognised", () => {
+		expect(
+			looksLikeSandboxFailure(
+				"[1:1:0921/1.1:FATAL:zygote_host_impl_linux.cc:129] No usable sandbox! Update your kernel",
+			),
+		).toBe(true);
+		expect(
+			looksLikeSandboxFailure(
+				"Failed to move to new namespace: PID namespaces supported, Network namespace supported, but failed: errno = Operation not permitted; setuid sandbox",
+			),
+		).toBe(true);
+		expect(looksLikeSandboxFailure("ordinary warning: gpu process")).toBe(
+			false,
+		);
+	});
+
+	const fakeBinary = (script: string) => {
+		const dir = join(root, "fakebin");
+		mkdirSync(dir, { recursive: true });
+		const bin = join(dir, "chrome-headless-shell");
+		writeFileSync(
+			bin,
+			`#!/bin/sh\necho "$@" >> "${join(root, "argv.log")}"\n${script}\n`,
+			{ mode: 0o755 },
+		);
+		return { binary: bin, libDirs: [] as string[] };
+	};
+	const invocations = () =>
+		existsSync(join(root, "argv.log"))
+			? readFileSync(join(root, "argv.log"), "utf8")
+					.trim()
+					.split("\n")
+					.filter(Boolean)
+			: [];
+
+	test("a browser that cannot start its sandbox surfaces the clear error and is never retried unsandboxed", async () => {
+		const install = fakeBinary(
+			'echo "[1:1:0921/1.1:FATAL:zygote_host_impl_linux.cc:129] No usable sandbox!" >&2\nexit 133',
+		);
+		const err = await captureScreenshot(install, "https://a.example/", {
+			sleep: async () => {},
+		}).catch((e) => e);
+		expect(err).toBeInstanceOf(ShotError);
+		expect((err as ShotError).kind).toBe("sandbox");
+		expect((err as ShotError).message).toBe(
+			"browser sandbox could not start; see plan.md",
+		);
+		const runs = invocations();
+		expect(runs.length).toBe(1);
+		expect(runs[0]).not.toContain("--no-sandbox");
+	});
+
+	test("the explicit opt-in is the only way the flag reaches the process", async () => {
+		const install = fakeBinary(
+			'echo "DevTools listening on ws://127.0.0.1:1/devtools/browser/x" >&2\nsleep 5',
+		);
+		const launched = await spawnBrowser(install, { noSandbox: true });
+		await launched.stop();
+		const plain = await spawnBrowser(install);
+		await plain.stop();
+		const runs = invocations();
+		expect(runs.length).toBe(2);
+		expect(runs[0]).toContain("--no-sandbox");
+		expect(runs[1]).not.toContain("--no-sandbox");
+	});
+
+	test("the service turns the failure into a clear 503, reports it in status, does not retry, and recovers on success", async () => {
+		const s = service("https://a.example.com/");
+		const launches: Array<boolean | undefined> = [];
+		let failing = true;
+		const env = (s.svc as unknown as { env: ShotEnv }).env;
+		env.capture = {
+			...env.capture,
+			launch: (async (_i, o) => {
+				launches.push(o?.noSandbox);
+				if (failing)
+					throw new ShotError(
+						"sandbox",
+						"browser sandbox could not start; see plan.md",
+					);
+				return { wsUrl: "ws://fake", stop: async () => {} };
+			}) as Launcher,
+		};
+		const err = await s.svc.capture(LEAD, false).catch((e) => e);
+		expect(err).toBeInstanceOf(ServiceUnavailableException);
+		expect((err as Error).message).toBe(
+			"browser sandbox could not start; see plan.md",
+		);
+		expect(launches).toEqual([false]);
+		const st = await s.svc.status(LEAD);
+		expect(st.available).toBe(false);
+		expect(st.unavailableReason).toBe(
+			"browser sandbox could not start; see plan.md",
+		);
+		s.advance(6 * 60_000);
+		expect((await s.svc.status(LEAD)).available).toBe(true);
+		failing = false;
+	});
+
+	test("with a cached picture, a sandbox failure shows the old picture and says the sandbox could not start", async () => {
+		const s = service("https://a.example.com/");
+		await s.svc.capture(LEAD, false);
+		s.advance(15 * 24 * 3600 * 1000);
+		const env = (s.svc as unknown as { env: ShotEnv }).env;
+		env.capture = {
+			...env.capture,
+			launch: (async () => {
+				throw new ShotError(
+					"sandbox",
+					"browser sandbox could not start; see plan.md",
+				);
+			}) as Launcher,
+		};
+		const out = await s.svc.capture(LEAD, false);
+		expect(out.fromCache).toBe(true);
+		expect(out.note).toContain("browser sandbox could not start");
+	});
+
+	test("the service passes the opt-in through, and only then", async () => {
+		for (const [n, [noSandbox, expected]] of (
+			[
+				[undefined, false],
+				[false, false],
+				[true, true],
+			] as const
+		).entries()) {
+			const s = service("https://a.example.com/", {
+				noSandbox,
+				cacheDir: join(root, `c${n}`),
+			});
+			const seen: Array<boolean | undefined> = [];
+			const env = (s.svc as unknown as { env: ShotEnv }).env;
+			const inner = env.capture?.launch;
+			env.capture = {
+				...env.capture,
+				launch: (async (i, o) => {
+					seen.push(o?.noSandbox);
+					return (inner as NonNullable<typeof inner>)(i, o);
+				}) as Launcher,
+			};
+			await s.svc.capture(LEAD, false);
+			expect(seen).toEqual([expected]);
+		}
 	});
 });

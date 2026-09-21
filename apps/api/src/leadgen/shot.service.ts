@@ -44,6 +44,7 @@ export type ShotEnv = {
 	capture?: CaptureDeps;
 	now?: () => Date;
 	homeDir?: string;
+	noSandbox?: boolean;
 };
 
 export const defaultShotEnv = (
@@ -51,6 +52,7 @@ export const defaultShotEnv = (
 ): ShotEnv => ({
 	cacheDir: env.LEADGEN_SHOT_CACHE_DIR ?? "/data/leadgen/crm-shots",
 	browserDir: env.LEADGEN_BROWSER_DIR,
+	noSandbox: env.LEADGEN_BROWSER_NO_SANDBOX === "yes",
 });
 
 export type ShotStatus = z.infer<typeof shotStatusOutput>;
@@ -58,9 +60,19 @@ export type ShotCapture = z.infer<typeof shotCaptureOutput>;
 
 const MAX_PARALLEL = 3;
 
+const SANDBOX_RECHECK_MS = 5 * 60_000;
+
 @Injectable()
 export class LeadgenShotService {
 	private running = 0;
+	private sandboxProblem: { message: string; at: number } | null = null;
+
+	private activeSandboxProblem(): string | null {
+		const p = this.sandboxProblem;
+		return p && this.now().getTime() - p.at < SANDBOX_RECHECK_MS
+			? p.message
+			: null;
+	}
 	private readonly inflight = new Map<string, Promise<ShotCapture>>();
 
 	constructor(
@@ -92,12 +104,12 @@ export class LeadgenShotService {
 	async status(leadId: string): Promise<ShotStatus> {
 		const install = this.install();
 		const unavailableReason = install
-			? null
+			? this.activeSandboxProblem()
 			: "The headless browser is not installed on this host.";
 		const target = await this.targetOf(leadId).catch(() => null);
 		const cached = target ? await this.cached(leadId, target) : null;
 		return {
-			available: install !== null,
+			available: install !== null && this.activeSandboxProblem() === null,
 			unavailableReason,
 			cached: cached !== null,
 			capturedAt: cached?.capturedAt.toISOString() ?? null,
@@ -184,7 +196,11 @@ export class LeadgenShotService {
 			);
 		this.running += 1;
 		try {
-			const result = await captureScreenshot(install, target, this.env.capture);
+			const result = await captureScreenshot(install, target, {
+				...this.env.capture,
+				noSandbox: this.env.noSandbox === true,
+			});
+			this.sandboxProblem = null;
 			await writeShot(this.env.cacheDir, shotName(leadId, target), result.png);
 			return {
 				capturedAt: this.now().toISOString(),
@@ -211,6 +227,11 @@ export class LeadgenShotService {
 		existing: CachedShot | null,
 		error: unknown,
 	): ShotCapture {
+		if (error instanceof ShotError && error.kind === "sandbox")
+			this.sandboxProblem = {
+				message: error.message,
+				at: this.now().getTime(),
+			};
 		const why =
 			error instanceof ShotError || error instanceof Error
 				? error.message
@@ -221,6 +242,8 @@ export class LeadgenShotService {
 				existing,
 				`The new capture failed (${why}). Showing the earlier picture.`,
 			);
+		if (error instanceof ShotError && error.kind === "sandbox")
+			throw new ServiceUnavailableException(error.message);
 		if (error instanceof ShotError && error.kind === "refused")
 			throw new BadRequestException(`Not captured: ${why}`);
 		throw new BadGatewayException(`Could not capture their site: ${why}`);
