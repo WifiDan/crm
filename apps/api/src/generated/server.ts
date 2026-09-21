@@ -27,6 +27,8 @@ import { fieldListInput, fieldListOutput, fieldByKeyInput, serializedFieldOutput
 import { googleConnectionStatusOutput, setAutoCreateInput, suppressDomainInput, suppressDomainOutput, threadInput, emailThreadOutput, calendarEventInput, calendarEventOutput } from "../google/google.contracts";
 import { purgeSyncedDataOutput, revokeAccessOutput, microsoftConnectionStatusOutput, setOutlookAutoCreateInput } from "../microsoft/microsoft.contracts";
 import { jobListOutput, jobRunsInput, jobRunsOutput, jobNameInput, jobRunNowOutput, jobSetEnabledInput, okOutput, alertListOutput, marketListOutput, leadsListInput, leadsListOutput, mirrorStatusOutput } from "../leadgen/leadgen.contracts";
+import { triageListInput, triageListOutput, reviewListInput, reviewListOutput, leadDetailInput, leadDetailOutput } from "../leadgen/lead-views.contracts";
+import { opsOverviewOutput, opsHealthOutput, opsCallListInput, opsCallListOutput, opsRecentSendsInput, opsRecentSendsOutput } from "../leadgen/ops.contracts";
 import { replyStatusOutput, replyListInput, replyListOutput, replySendInput, replySendOutput, replyDiscardInput, replyDiscardOutput } from "../leadgen/reply-approval.contracts";
 import { savedViewListInput, savedViewListOutput, savedViewCreateInput, savedViewOutput, savedViewUpdateArgs, savedViewIdInput, savedViewDeleteOutput } from "../saved-views/saved-views.contracts";
 import { agentModelOutput, modelCatalogOutput, setAgentModelInput, researchKeyOutput, setResearchKeyInput, archiveRetentionOutput, setArchiveRetentionDaysInput } from "../settings/settings.contracts";
@@ -589,6 +591,32 @@ const appRouter = t.router({
       .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
     mirrorStatus: publicProcedure
       .output(mirrorStatusOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    triageList: publicProcedure
+      .input(triageListInput)
+      .output(triageListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    reviewList: publicProcedure
+      .input(reviewListInput)
+      .output(reviewListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    leadDetail: publicProcedure
+      .input(leadDetailInput)
+      .output(leadDetailOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    opsOverview: publicProcedure
+      .output(opsOverviewOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    opsHealth: publicProcedure
+      .output(opsHealthOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    opsCallList: publicProcedure
+      .input(opsCallListInput)
+      .output(opsCallListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    opsRecentSends: publicProcedure
+      .input(opsRecentSendsInput)
+      .output(opsRecentSendsOutput)
       .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
     }),
   leadgenReplies: t.router({

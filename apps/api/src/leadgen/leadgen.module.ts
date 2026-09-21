@@ -2,10 +2,12 @@ import { Module } from "@nestjs/common";
 import { TrpcModule } from "../trpc/trpc.module";
 import { LG_JOB_HANDLERS } from "./job-handler";
 import { LgJobSchedulerService } from "./job-scheduler.service";
+import { LeadgenViewsService } from "./lead-views.service";
 import { LeadgenRouter } from "./leadgen.router";
 import { LeadgenSeedService } from "./leadgen.seed";
 import { LeadgenService } from "./leadgen.service";
 import { NocodbMirrorHandler } from "./nocodb-mirror.handler";
+import { LeadgenOpsService } from "./ops.service";
 import { OutreachCompareHandler } from "./outreach-compare.handler";
 import { OutreachShadowHandler } from "./outreach-shadow.handler";
 import { RepliesDraftHandler } from "./replies-draft.handler";
@@ -50,6 +52,8 @@ import { SendlogSyncHandler } from "./sendlog-sync.handler";
 		},
 		LgJobSchedulerService,
 		LeadgenService,
+		LeadgenViewsService,
+		LeadgenOpsService,
 		LeadgenSeedService,
 		LeadgenRouter,
 		{
