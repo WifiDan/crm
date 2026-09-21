@@ -6,6 +6,10 @@ import {
 	previewInput,
 	saveInput,
 } from "../src/leadgen/demo-edit.contracts";
+import {
+	shotCaptureInput,
+	shotStatusInput,
+} from "../src/leadgen/shot.contracts";
 import { auditInput } from "../src/leadgen/site-audit.contracts";
 
 const SRC = join(import.meta.dir, "../src");
@@ -48,9 +52,11 @@ describe("the scan is looking at real files", () => {
 describe("only demo-files.ts changes files on disk", () => {
 	const WRITE_API =
 		/\b(writeFile|writeFileSync|appendFile|copyFile|rename|unlink|rm|rmdir|mkdir|truncate|symlink|createWriteStream|chmod|utimes)\b\s*\(/;
-	test("no other leadgen file calls a file-changing API", () => {
+	test("no other leadgen file calls a file-changing API (the screenshot cache and the browser profile cleanup are the only other writers)", () => {
 		const writers = leadgen.filter((f) => WRITE_API.test(f.code));
-		expect(names(writers)).toEqual([at("demo-files.ts")]);
+		expect(names(writers)).toEqual(
+			[at("demo-files.ts"), at("shot-browser.ts"), at("shot-cache.ts")].sort(),
+		);
 	});
 	test("demo-files.ts really holds them (the allowlist cannot go stale)", () => {
 		expect(WRITE_API.test(get("demo-files.ts"))).toBe(true);
@@ -80,7 +86,11 @@ describe("only demo-files.ts changes files on disk", () => {
 });
 
 describe("the demo edit and audit routers are human-session doors", () => {
-	for (const f of ["demo-edit.router.ts", "site-audit.router.ts"]) {
+	for (const f of [
+		"demo-edit.router.ts",
+		"site-audit.router.ts",
+		"shot.router.ts",
+	]) {
 		test(`${f} is session-only for the whole class, with no REST exposure`, () => {
 			const code = get(f);
 			expect(code).toMatch(
@@ -204,5 +214,49 @@ describe("only the outbound guard opens network connections to lead-supplied add
 			/redirect\s*:\s*["']follow["']/.test(f.code),
 		);
 		expect(names(offenders)).toEqual([]);
+	});
+});
+
+describe("the screenshot browser", () => {
+	test("among the screenshot, demo and audit files among the screenshot, demo and audit files only shot-browser.ts starts a process", () => {
+		const users = leadgen.filter(
+			(f) =>
+				/^leadgen\/(shot|demo|site-audit|outbound)/.test(f.name) &&
+				/node:child_process/.test(f.code),
+		);
+		expect(names(users)).toEqual([at("shot-browser.ts")]);
+	});
+	test("the browser gets a minimal environment, never the API own environment", () => {
+		const code = get("shot-browser.ts");
+		expect(/process\.env/.test(code)).toBe(false);
+		expect(/\.\.\.process/.test(code)).toBe(false);
+		expect(/LD_LIBRARY_PATH/.test(code)).toBe(true);
+	});
+	test("LD_LIBRARY_PATH is never set on the API process itself", () => {
+		for (const f of leadgen)
+			expect({
+				f: f.name,
+				hit: /process\.env\.LD_LIBRARY_PATH|process\.env\[["']LD_LIBRARY_PATH/.test(
+					f.code,
+				),
+			}).toEqual({ f: f.name, hit: false });
+	});
+	test("the image route needs a session (no anonymous access) and only serves cached files", () => {
+		const code = get("shot.controller.ts");
+		expect(/AllowAnonymous/.test(code)).toBe(false);
+		expect(/captureScreenshot|\.capture\(/.test(code)).toBe(false);
+		expect((code.match(/@Get\(/g) ?? []).length).toBe(1);
+	});
+	test("the shot inputs carry a lead id only", () => {
+		const banned = ["url", "path", "slug", "file", "target", "host"];
+		for (const shape of [shotStatusInput.shape, shotCaptureInput.shape])
+			for (const key of banned) expect(Object.keys(shape)).not.toContain(key);
+	});
+	test("the service checks the address before it ever starts a browser", () => {
+		const code = get("shot.service.ts");
+		expect(code.indexOf("this.precheck(")).toBeGreaterThan(-1);
+		expect(code.indexOf("this.precheck(")).toBeLessThan(
+			code.indexOf("this.run("),
+		);
 	});
 });

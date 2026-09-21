@@ -130,7 +130,10 @@ const dom = await new Promise<string>((resolve, reject) => {
 			"--dump-dom",
 			`http://127.0.0.1:${server.port}/parent.html`,
 		],
-		{ env, stdio: ["ignore", "pipe", "ignore"] },
+		{
+			env: env as unknown as NodeJS.ProcessEnv,
+			stdio: ["ignore", "pipe", "ignore"],
+		},
 	);
 	let out = "";
 	child.stdout.on("data", (c: Buffer) => {

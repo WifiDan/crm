@@ -91,7 +91,7 @@ export async function resolveDemoDir(
 			"the demo folder resolves outside the output folder",
 		);
 	const index = await lstatOrNull(join(dir, "index.html"));
-	if (!index || !index.isFile())
+	if (!index?.isFile())
 		throw new DemoFileError("not-found", "the demo has no index.html");
 	return dir;
 }
