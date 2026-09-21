@@ -52,6 +52,8 @@ const leadIdentity = {
 	contact: z.string().nullable(),
 	campaign: z.string().nullable(),
 	market: z.string().nullable(),
+	version: z.string().nullable(),
+	decisionDate: z.string().nullable(),
 };
 
 export const triageRowOutput = z.object({

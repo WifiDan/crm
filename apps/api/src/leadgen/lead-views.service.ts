@@ -39,6 +39,8 @@ const LEAD_COLUMNS = Prisma.sql`
 	NULLIF(BTRIM(l.raw->>'Service Type'), '') AS service,
 	NULLIF(BTRIM(l.raw->>'Contact Name'), '') AS contact,
 	l.raw->>'Quality Notes' AS notes,
+	NULLIF(BTRIM(l.raw->>'UpdatedAt'), '') AS version,
+	NULLIF(BTRIM(l.raw->>'Decision Date'), '') AS "decisionDate",
 	c.name AS campaign, m.name AS market`;
 
 const LEAD_JOINS = Prisma.sql`

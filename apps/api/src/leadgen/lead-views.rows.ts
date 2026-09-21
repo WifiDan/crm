@@ -30,6 +30,8 @@ const identityRow = {
 	campaign: text,
 	market: text,
 	notes: text,
+	version: text,
+	decisionDate: text,
 };
 
 export const triageSqlRow = z.object(identityRow);
@@ -80,6 +82,8 @@ export function toIdentity(row: IdentityRow) {
 		contact: row.contact,
 		campaign: row.campaign,
 		market: row.market,
+		version: row.version,
+		decisionDate: row.decisionDate,
 	};
 }
 

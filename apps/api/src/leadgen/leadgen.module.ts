@@ -2,6 +2,14 @@ import { Module } from "@nestjs/common";
 import { TrpcModule } from "../trpc/trpc.module";
 import { LG_JOB_HANDLERS } from "./job-handler";
 import { LgJobSchedulerService } from "./job-scheduler.service";
+import { LeadDecisionRouter } from "./lead-decision.router";
+import {
+	defaultDecisionClock,
+	LeadDecisionService,
+	LG_DECISION_CLOCK,
+	LG_SEND_STATE,
+} from "./lead-decision.service";
+import { LG_LEAD_STORE, nocodbLeadStore } from "./lead-decision.store";
 import { LeadgenViewsService } from "./lead-views.service";
 import { LeadgenRouter } from "./leadgen.router";
 import { LeadgenSeedService } from "./leadgen.seed";
@@ -10,6 +18,7 @@ import { NocodbMirrorHandler } from "./nocodb-mirror.handler";
 import { LeadgenOpsService } from "./ops.service";
 import { OutreachCompareHandler } from "./outreach-compare.handler";
 import { OutreachShadowHandler } from "./outreach-shadow.handler";
+import { loadPythonSendState } from "./python-state";
 import { RepliesDraftHandler } from "./replies-draft.handler";
 import { RepliesPollHandler } from "./replies-poll.handler";
 import { ReplyApprovalRouter } from "./reply-approval.router";
@@ -67,6 +76,17 @@ import { SendlogSyncHandler } from "./sendlog-sync.handler";
 		ReplySendService,
 		ReplyApprovalService,
 		ReplyApprovalRouter,
+		{
+			provide: LG_LEAD_STORE,
+			useFactory: () => nocodbLeadStore(process.env),
+		},
+		{
+			provide: LG_SEND_STATE,
+			useFactory: () => loadPythonSendState,
+		},
+		{ provide: LG_DECISION_CLOCK, useValue: defaultDecisionClock },
+		LeadDecisionService,
+		LeadDecisionRouter,
 	],
 	exports: [LgJobSchedulerService, LeadgenService],
 })
