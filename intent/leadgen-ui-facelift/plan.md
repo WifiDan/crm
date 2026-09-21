@@ -80,3 +80,75 @@ Raw SQL is used because the filters live in the NocoDB JSON (`raw`) and Prisma's
 - The live test also parses every procedure's output through its zod contract, because calling the service directly skips the router's output validation.
 - New env variables (all optional, file paths) are declared in `.env.example`.
 - Ops numbers were compared with the old `/api/stats` and `/api/tasks` on port 8768. All nine counts matched. Reply rate is defined differently (see the report).
+
+---
+
+# Plan — Slice 2a (guarded decisions and rework)
+
+**Depends on:** `spec-slice2.md` (same folder), and Slice 1 above. **Branch:** `feat/leadgen-ui-decisions`, child of `feat/leadgen-ui` (b8cfc96). **Board:** Kanban #486. **Not deployed.** Danio decides the deploy, because this is a send-affecting write path.
+
+## Findings that shape the plan
+
+- **Credential.** The mirror reads `NOCODB_LEADS_TOKEN`. In the production CRM `.env` its value is byte-identical to the Python sender's `NOCODB_LOCAL_LEADS_TOKEN` (compared by SHA-256, nothing printed). NocoDB reports the token owner as `danio@elitesystemsdesign.com` with base role `creator`. That role can write records. Not a stop condition: the token is present and write-capable. It is a least-privilege finding: a read-only job holds the sender's write token. The dev clone `.env` has no NocoDB variables, so every write test uses stubs.
+- **`Send Approved` in the old code.** `apiDecision` writes the field only when `stage === "review"` on the ISP table. For a triage-stage decision it writes nothing and leaves an old value in place. Sequence that breaks: review Approve (true), triage Reject, triage Approve. The decision reads `Approved` and the stale `true` survives, so the sender mails a lead nobody re-reviewed. The spec rule ("everything else writes false") closes that hole. The CRM follows the spec. Deliberate delta from the old code: an ISP decision that is not review + Approved also writes `Send Approved=false`. The equivalence test pins this delta.
+- **Table is never a client input.** The old API took `table` from the request body. The CRM derives the NocoDB table and row id from the `lg_lead` record, so a caller cannot aim a write at another table.
+- **Version token.** NocoDB `UpdatedAt` has one-second resolution and is stored in `lg_lead.raw`. The page sends `UpdatedAt`, `Approval Decision` and `Decision Date` as it saw them. The server reads the live row and compares all three.
+- **Live GET by row id works** (`/api/v2/tables/<t>/records/<id>`) and returns every column. `Send Approved` comes back as `1` (number), so the read-back check accepts `true`, `1` and `"true"`.
+- **Gym table:** no `Send Approved`, no rework columns. Gym review writes only the decision.
+
+## Decisions taken where the spec was silent
+
+1. `LEADGEN_DECISION_APPROVERS` has no fallback. Unset or empty refuses everything. Deploy sets it explicitly (to the same account as the reply approvers).
+2. Write token variable: `NOCODB_LEADS_WRITE_TOKEN`, falling back to `NOCODB_LEADS_TOKEN`. The status query reports which one is in use (never the value). A later dedicated write token needs no code change.
+3. Audit table `lg_lead_decision` (additive migration, `crm_dev` only). Refusals before the write are logged, not stored. Every attempt that reaches NocoDB has a row.
+4. `requestId` (uuid from the page, one per confirm click) gives idempotency. Same id twice: one write, the second call returns the first result.
+5. Approve at review stage on an ISP lead needs `confirmArm: true`. The server refuses without it. The UI sets it only from the confirm dialog.
+6. A decision or rework on a Do Not Contact lead is refused for every decision, as the spec says.
+7. One decision per lead at a time: an in-process lock plus a refusal when a PENDING audit row for the lead is under two minutes old.
+8. After a 2xx PATCH the service reads the row back and compares every written field. A mismatch (NocoDB discards unknown columns silently) is recorded UNKNOWN and reported as an error.
+
+## API (apps/api/src/leadgen)
+
+| File | Purpose |
+| --- | --- |
+| `lead-decision.rules.ts` | Pure. Pool config (table id, rework, send flag), `buildDecisionPatch`, `buildReworkPatch`, policy from env, version check, refusal reasons, eligibility via `buildCandidates` from `outreach-plan.ts`. The only file that names the `Send Approved` write. |
+| `lead-decision.store.ts` | `LeadRowStore` port and the fetch adapter for NocoDB (`getRow`, `hasColumn`, `patchRow`). The only file with a NocoDB write call. Timeouts, 4xx = definite failure, 5xx or network = unknown. |
+| `lead-decision.service.ts` | `LeadDecisionService.decide / rework / status`. Order: policy, request replay, mirror lookup, live read, column check, version, blockers, audit row (PENDING), PATCH, read-back, audit outcome. |
+| `lead-decision.contracts.ts` | zod. No reviewer, no table, one lead id. |
+| `lead-decision.router.ts` | Alias `leadgenDecisions`. `AuthMiddleware` + `SessionOnlyMiddleware`, no REST meta. Only caller of the service. |
+| `lead-views.*` | Add `version` and `decisionDate` (from `raw`) to list rows and detail. Read only. |
+| `leadgen.module.ts` | Provide store, service, router. |
+| `packages/db` | Model `LgLeadDecision`, enum `LgDecisionStatus`, migration `20260920120000_leadgen_lead_decision` (create table only). |
+
+## App
+
+- `lead-actions.tsx`: `DecisionActions` (Approve, Reject, Needs Changes; review-stage Approve opens an alert dialog stating the lead becomes eligible for the next 08:30 send), `ReworkForm` (notes required), applied-result overlay, "mirror trails by up to 15 minutes" line.
+- `triage-tab.tsx`: default filter `all`; actions in the detail panel (stage `triage`).
+- `review-tab.tsx`: actions in the detail (stage `review`), rework form for ISP only; the "done in the old dashboard until Slice 2" note becomes "inline editing stays in the old dashboard".
+
+## Order of work
+
+1. Commit spec-slice2 and this plan.
+2. Small items: Triage default `all`; reply-rate pin test (pure SQL pin plus a `crm_dev` live check with two inbound messages on one lead).
+3. Rules and their tests, then the equivalence test against the real old `apiDecision` / `apiRework` (run in a `vm` sandbox with a stub `fetch`; skipped when the old file is absent, with a frozen table so it still runs elsewhere).
+4. Store and its tests against a local HTTP stub.
+5. Migration on `crm_dev` only, then service, contracts, router, module, `trpc:generate`.
+6. Guard tests, structural test, door test.
+7. App actions, render tests, `next build`.
+8. Live check on `crm_dev` (real Postgres, stub store) and a READ-ONLY probe of NocoDB (column present, GET row, patch compared with old logic).
+9. Break-on-purpose run: revert each guard, show its test fail, restore.
+10. All gates. Commit in logical units, explicit paths, `git commit -F`, no trailer.
+
+## Tests that prove it
+
+- Patch equivalence with the old code over pool x stage x decision, and rework; the single delta is asserted.
+- Guard tests: Send Approved matrix (gym included), missing column fails closed with no PATCH and no audit row, stale version 409, DNC and already-sent refusal, ineligible lead refusal, non-approver, unset and empty allowlist, `confirmArm`, audit row exists before the PATCH, timeout recorded UNKNOWN and never retried, 4xx recorded FAILED, double click with one `requestId` writes once, in-flight lock, `lg_lead` never written.
+- Structural (`leadgen-decision-door.spec.ts`): only the store writes to NocoDB; only rules name the `Send Approved` write; only the decision router imports the service; no handler or scheduler reaches it; router is session-only with no REST; contracts have no reviewer, no table, no bulk field; only the mirror handler writes `lg_lead`.
+- The existing `leadgen-no-send.spec.ts` stays unchanged and green.
+
+## Risks
+
+- Mirror lag: a second action on the same lead before the mirror catches up uses the version returned by the first write (page overlay).
+- The read-back adds one GET per write. Acceptable at human click rate.
+- Real NocoDB write path is not exercised (no prod writes allowed). It is covered by the HTTP stub and the read-only probe.
+- Complexity cap 62: pure helpers, small methods.
