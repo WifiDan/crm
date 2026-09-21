@@ -23,7 +23,8 @@ export default function LeadgenPage() {
 				<PageShellHeading>
 					<PageShellTitle>Lead Gen</PageShellTitle>
 					<PageShellDescription>
-						Scheduled jobs, the NocoDB lead mirror, markets and alerts.
+						Prospect triage, demo review and pipeline health, plus scheduled
+						jobs, the NocoDB lead mirror, markets and alerts.
 					</PageShellDescription>
 				</PageShellHeading>
 			</PageShellHeader>

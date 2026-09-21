@@ -69,3 +69,14 @@ Raw SQL is used because the filters live in the NocoDB JSON (`raw`) and Prisma's
 - Narrow-viewport look cannot be screenshotted without a signed-in browser session. If that stays true it is reported as NOT verified. Layout is built with responsive classes only (`hidden lg:block`), no JS measuring.
 - Complexity cap 62: keep helpers small and pure.
 - AGENTS.md says "no Co-Authored-By"; Danio's task and the branch history use it. Followed Danio's instruction.
+
+## As built (departures from the plan above)
+
+- One extra query, `campaigns`, because the campaign filter needs ids. Eight new procedures in total.
+- Extra API files: `lead-views.rows.ts` (zod parse of SQL rows), `ops.sql.ts` (ops counts), `site-builds.ts` (v2 / v1 badge from `/data/leadgen/site-generator/output`).
+- Extra app files: `lead-parts.tsx`, `ops-lists.tsx`, `ops-health-panel.tsx`, `leadgen-format.tsx` (holds the mirror-age strip and the old-dashboard link builder).
+- Review shows their site on the left and the new demo on the right. Narrow screens toggle between the two.
+- The narrow-viewport check is a server-render test (`apps/app/test/leadgen-views-render.spec.tsx`) that asserts the responsive structure. No screenshot was taken: the pages sit behind a Better Auth session and there is no browser on the host. The look on a real phone is NOT verified.
+- The live test also parses every procedure's output through its zod contract, because calling the service directly skips the router's output validation.
+- New env variables (all optional, file paths) are declared in `.env.example`.
+- Ops numbers were compared with the old `/api/stats` and `/api/tasks` on port 8768. All nine counts matched. Reply rate is defined differently (see the report).

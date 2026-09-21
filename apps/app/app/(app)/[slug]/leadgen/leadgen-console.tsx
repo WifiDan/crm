@@ -9,11 +9,23 @@ import {
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTRPC } from "@/lib/trpc/client";
+import { OpsTab } from "./ops-tab";
 import { RepliesTab } from "./replies-tab";
+import { ReviewTab } from "./review-tab";
+import { TriageTab } from "./triage-tab";
 
-const TABS = ["Jobs", "Replies", "Leads", "Markets", "Alerts"] as const;
+const TABS = [
+	"Ops",
+	"Triage",
+	"Review",
+	"Replies",
+	"Jobs",
+	"Leads",
+	"Markets",
+	"Alerts",
+] as const;
 type Tab = (typeof TABS)[number];
 
 const STAGES = [
@@ -44,17 +56,27 @@ function statusVariant(status: string | null) {
 }
 
 export function LeadgenConsole() {
-	const [tab, setTab] = useState<Tab>("Jobs");
+	const [tab, setTab] = useState<Tab>("Ops");
+	useEffect(() => {
+		const fromHash = TABS.find(
+			(t) => t === decodeURIComponent(window.location.hash.slice(1)),
+		);
+		if (fromHash) setTab(fromHash);
+	}, []);
+	const select = (next: Tab) => {
+		setTab(next);
+		window.history.replaceState(null, "", `#${next}`);
+	};
 	return (
 		<div className="flex min-w-0 flex-col gap-4">
-			<div className="flex gap-1 border-b border-border">
+			<div className="flex gap-1 overflow-x-auto border-b border-border">
 				{TABS.map((t) => (
 					<button
 						key={t}
 						type="button"
-						onClick={() => setTab(t)}
+						onClick={() => select(t)}
 						className={cn(
-							"-mb-px border-b-2 px-3 py-2 text-xs font-medium",
+							"-mb-px shrink-0 border-b-2 px-3 py-2 text-xs font-medium",
 							tab === t
 								? "border-foreground text-foreground"
 								: "border-transparent text-muted-foreground hover:text-foreground",
@@ -64,6 +86,9 @@ export function LeadgenConsole() {
 					</button>
 				))}
 			</div>
+			{tab === "Ops" ? <OpsTab onNavigate={select} /> : null}
+			{tab === "Triage" ? <TriageTab /> : null}
+			{tab === "Review" ? <ReviewTab /> : null}
 			{tab === "Jobs" ? <JobsTab /> : null}
 			{tab === "Replies" ? <RepliesTab /> : null}
 			{tab === "Leads" ? <LeadsTab /> : null}
