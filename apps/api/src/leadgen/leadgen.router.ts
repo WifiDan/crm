@@ -13,6 +13,7 @@ import { AuthMiddleware } from "../trpc/middlewares/auth.middleware";
 import { restMeta } from "../trpc/openapi";
 import { LgJobSchedulerService } from "./job-scheduler.service";
 import {
+	campaignListOutput,
 	leadDetailInput,
 	leadDetailOutput,
 	reviewListInput,
@@ -126,6 +127,14 @@ export class LeadgenRouter {
 	})
 	async mirrorStatus() {
 		return this.leadgen.mirrorStatus();
+	}
+
+	@Query({
+		output: campaignListOutput,
+		meta: restMeta("GET", "/leadgen/campaigns", ["Leadgen"]),
+	})
+	async campaigns() {
+		return this.views.campaigns();
 	}
 
 	@Query({

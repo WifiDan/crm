@@ -345,6 +345,7 @@ describe("Slice 1 is read only", () => {
 	test("the new router procedures are all queries", () => {
 		const router = strip(readFileSync(join(dir, "leadgen.router.ts"), "utf8"));
 		for (const name of [
+			"campaigns",
 			"triageList",
 			"reviewList",
 			"leadDetail",

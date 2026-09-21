@@ -1,5 +1,18 @@
 import { db } from "@crm/db";
+import {
+	campaignListOutput,
+	leadDetailOutput,
+	reviewListOutput,
+	triageListOutput,
+} from "../src/leadgen/lead-views.contracts";
 import { LeadgenViewsService } from "../src/leadgen/lead-views.service";
+import {
+	opsCallListOutput,
+	opsHealthOutput,
+	opsOverviewOutput,
+	opsRecentSendsOutput,
+} from "../src/leadgen/ops.contracts";
+import { LeadgenOpsService } from "../src/leadgen/ops.service";
 
 const oldBase = process.env.PARITY_OLD_BASE ?? "http://100.78.149.77:8767";
 
@@ -135,6 +148,55 @@ const oldApproved = oldLeads.filter(
 		(l.table === "gym" ? l.decision === "Approved" : l.sendApproved),
 ).length;
 report("approved view", oldApproved, reviewCounts.view?.approved);
+
+const ops = new LeadgenOpsService(db);
+const firstReview = review.rows[0];
+const contracts: Array<[string, () => Promise<unknown>]> = [
+	[
+		"triageList",
+		async () =>
+			triageListOutput.parse(
+				await views.triageList({ ...base, page: 1, decision: "all" }),
+			),
+	],
+	[
+		"reviewList",
+		async () =>
+			reviewListOutput.parse(
+				await views.reviewList({ ...base, page: 1, view: "all" }),
+			),
+	],
+	[
+		"leadDetail",
+		async () =>
+			leadDetailOutput.parse(await views.leadDetail(firstReview?.id ?? "")),
+	],
+	["campaigns", async () => campaignListOutput.parse(await views.campaigns())],
+	["opsOverview", async () => opsOverviewOutput.parse(await ops.overview())],
+	["opsHealth", async () => opsHealthOutput.parse(await ops.health())],
+	[
+		"opsCallList",
+		async () =>
+			opsCallListOutput.parse(await ops.callList({ ...base, page: 1 })),
+	],
+	[
+		"opsRecentSends",
+		async () =>
+			opsRecentSendsOutput.parse(await ops.recentSends({ ...base, page: 1 })),
+	],
+];
+for (const [name, run] of contracts) {
+	try {
+		await run();
+		report(`output contract ${name} (prod data)`, "valid", "valid");
+	} catch (error) {
+		report(
+			`output contract ${name} (prod data)`,
+			"valid",
+			String(error).slice(0, 300),
+		);
+	}
+}
 
 await db.$disconnect();
 console.log(

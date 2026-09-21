@@ -118,3 +118,7 @@ export const leadDetailOutput = z
 		updatedAt: z.string(),
 	})
 	.nullable();
+
+export const campaignListOutput = z.array(
+	z.object({ id: z.string(), name: z.string(), status: z.string() }),
+);

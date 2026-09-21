@@ -1,6 +1,18 @@
 import { db } from "@crm/db";
+import {
+	campaignListOutput,
+	leadDetailOutput,
+	reviewListOutput,
+	triageListOutput,
+} from "../src/leadgen/lead-views.contracts";
 import { LeadgenViewsService } from "../src/leadgen/lead-views.service";
 import { MIRROR_TABLES } from "../src/leadgen/mirror-map";
+import {
+	opsCallListOutput,
+	opsHealthOutput,
+	opsOverviewOutput,
+	opsRecentSendsOutput,
+} from "../src/leadgen/ops.contracts";
 import { LeadgenOpsService } from "../src/leadgen/ops.service";
 
 const dbName = /\/([a-z_]+)(\?|$)/.exec(process.env.DATABASE_URL ?? "")?.[1];
@@ -480,6 +492,54 @@ try {
 		health.crmSync.companyMap !== null && health.crmSync.dealQueue !== null,
 		health.crmSync.error ?? "",
 	);
+	const contracts: Array<[string, () => Promise<unknown>]> = [
+		[
+			"triageList",
+			async () =>
+				triageListOutput.parse(
+					await views.triageList({ ...base, page: 1, decision: "all" }),
+				),
+		],
+		[
+			"reviewList",
+			async () =>
+				reviewListOutput.parse(
+					await views.reviewList({ ...base, page: 1, view: "all" }),
+				),
+		],
+		[
+			"leadDetail",
+			async () => leadDetailOutput.parse(await views.leadDetail(detailId)),
+		],
+		[
+			"campaigns",
+			async () => campaignListOutput.parse(await views.campaigns()),
+		],
+		["opsOverview", async () => opsOverviewOutput.parse(await ops.overview())],
+		["opsHealth", async () => opsHealthOutput.parse(await ops.health())],
+		[
+			"opsCallList",
+			async () =>
+				opsCallListOutput.parse(await ops.callList({ ...base, page: 1 })),
+		],
+		[
+			"opsRecentSends",
+			async () =>
+				opsRecentSendsOutput.parse(await ops.recentSends({ ...base, page: 1 })),
+		],
+	];
+	for (const [name, run] of contracts) {
+		try {
+			await run();
+			check(`output contract: ${name} matches its zod schema`, true);
+		} catch (error) {
+			check(
+				`output contract: ${name} matches its zod schema`,
+				false,
+				String(error).slice(0, 300),
+			);
+		}
+	}
 } finally {
 	await cleanup();
 	const left = await db.lgLead.count({

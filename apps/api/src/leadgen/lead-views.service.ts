@@ -5,6 +5,7 @@ import { InjectDatabase } from "../database/database.constants";
 import { paginate } from "../trpc/list-input";
 import { slugFromDemoUrl } from "./lead-view";
 import {
+	type campaignListOutput,
 	type leadDetailOutput,
 	type reviewListInput,
 	type reviewListOutput,
@@ -136,6 +137,13 @@ export class LeadgenViewsService {
 		);
 		const first = detailSqlRow.array().parse(rows)[0];
 		return first ? toDetail(first) : null;
+	}
+
+	async campaigns(): Promise<z.infer<typeof campaignListOutput>> {
+		return this.db.lgCampaign.findMany({
+			orderBy: { name: "asc" },
+			select: { id: true, name: true, status: true },
+		});
 	}
 
 	private async count(where: Prisma.Sql): Promise<number> {

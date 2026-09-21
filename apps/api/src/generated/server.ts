@@ -27,7 +27,7 @@ import { fieldListInput, fieldListOutput, fieldByKeyInput, serializedFieldOutput
 import { googleConnectionStatusOutput, setAutoCreateInput, suppressDomainInput, suppressDomainOutput, threadInput, emailThreadOutput, calendarEventInput, calendarEventOutput } from "../google/google.contracts";
 import { purgeSyncedDataOutput, revokeAccessOutput, microsoftConnectionStatusOutput, setOutlookAutoCreateInput } from "../microsoft/microsoft.contracts";
 import { jobListOutput, jobRunsInput, jobRunsOutput, jobNameInput, jobRunNowOutput, jobSetEnabledInput, okOutput, alertListOutput, marketListOutput, leadsListInput, leadsListOutput, mirrorStatusOutput } from "../leadgen/leadgen.contracts";
-import { triageListInput, triageListOutput, reviewListInput, reviewListOutput, leadDetailInput, leadDetailOutput } from "../leadgen/lead-views.contracts";
+import { campaignListOutput, triageListInput, triageListOutput, reviewListInput, reviewListOutput, leadDetailInput, leadDetailOutput } from "../leadgen/lead-views.contracts";
 import { opsOverviewOutput, opsHealthOutput, opsCallListInput, opsCallListOutput, opsRecentSendsInput, opsRecentSendsOutput } from "../leadgen/ops.contracts";
 import { replyStatusOutput, replyListInput, replyListOutput, replySendInput, replySendOutput, replyDiscardInput, replyDiscardOutput } from "../leadgen/reply-approval.contracts";
 import { savedViewListInput, savedViewListOutput, savedViewCreateInput, savedViewOutput, savedViewUpdateArgs, savedViewIdInput, savedViewDeleteOutput } from "../saved-views/saved-views.contracts";
@@ -591,6 +591,9 @@ const appRouter = t.router({
       .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
     mirrorStatus: publicProcedure
       .output(mirrorStatusOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    campaigns: publicProcedure
+      .output(campaignListOutput)
       .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
     triageList: publicProcedure
       .input(triageListInput)
