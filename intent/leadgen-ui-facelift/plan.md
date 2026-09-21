@@ -166,3 +166,75 @@ Raw SQL is used because the filters live in the NocoDB JSON (`raw`) and Prisma's
 - **Arming rule copy on the page.** The page mirrors `armsSending` only to decide whether to show the confirm dialog. The server decides, and refuses an arming Approve without `confirmArm`.
 - **No fallback for `LEADGEN_DECISION_APPROVERS`**, as planned. `.env.example` documents it and `NOCODB_LEADS_WRITE_TOKEN`.
 - **Migration** `20260920120000_leadgen_lead_decision` is create-table only, applied to `crm_dev` only. `prisma migrate diff` against `crm_dev` reports no difference. Production is not migrated.
+
+---
+
+# Plan — Slice 2b (demo editing, site audit, local demo preview)
+
+**Depends on:** `spec-slice2b.md`, `parity-table.md`, Slices 1 and 2a above. **Branch:** `feat/leadgen-ui-2b`, child of `feat/leadgen-ui-decisions` (9896ad4). **Board:** Kanban #486. **Not deployed.** Old dashboards stay untouched.
+
+## Findings that shape the plan
+
+- **How an edited demo reaches the live URL (asked for first).** It does not, by itself. Old `apiSave` overwrites only `site-generator/output/<slug>/index.html` on disk. The old dashboard never redeploys. Cloudflare only changes when `deploy-demo.sh <slug>` runs (`wrangler pages deploy output/<slug> --branch=<28-char slug>`), which republishes the same branch alias `https://<branch>.ei-leadgen-demos.pages.dev`. That is the URL emailed to leads, so a deploy after an edit changes what an already-emailed lead sees. `nightly_orchestrator.py` runs `deploy_and_link.js` only for slugs it just built or reworked (lines ~869 and ~986). So: an edit stays local until someone runs the deploy, or until a rebuild of that lead replaces the local file and deploys it (which also throws away the edit). 2b keeps that separation. No auto-redeploy. The UI says "Saved locally, not yet live" and prints the deploy command.
+- **The old backup would have gone public.** `deploy-demo.sh` publishes the whole slug folder. Old `apiSave` wrote `index.<time>.bak.html` inside it. 2b writes backups to `LEADGEN_DEMO_BACKUP_DIR` (default `/data/leadgen/demo-edit-backups/<slug>/`), outside the output folder. Startup check refuses a backup dir inside the output dir.
+- **Build records.** `lg_build` is empty and `manifest.json` names only 2 of the 75 output folders. The build record used is the lead's own mirrored `Demo Site URL`: its slug, resolved with the existing `resolveBuildDir` (exact folder, else unique 28-char-prefix match), must name an existing folder that holds `index.html`. The caller never supplies a slug or a path.
+- **Cookies do not reach a sandboxed frame's subresources.** A sandboxed document without `allow-same-origin` has an opaque origin, so its image/CSS requests to the CRM origin are cross-site and the session cookie is not sent. A cookie-authenticated `/demo/` route would therefore break every asset. 2b serves demo files from a signed, short-lived link minted by a session-only tRPC call (below).
+- **Everything is one origin.** The browser reaches only the Next app (`/api/[...path]` proxies to the API). Demo files therefore arrive on the CRM origin, so the sandbox must be enforced by the response headers as well as the iframe attribute.
+- **Bun honours `lookup`** on `node:http(s).request` (checked on Joshua: bun 1.3.12 and node 22 both call it). That lets the SSRF guard pin the connection to the address it validated, which closes DNS rebinding.
+- **Screenshots cannot run on Joshua without root.** See "Screenshots" below.
+
+## Sandbox design (the part that matters)
+
+1. **Where demo HTML is shown.** Only inside `<iframe sandbox="allow-scripts">` (no `allow-same-origin`, no `allow-top-navigation`, no `allow-popups`, no `allow-forms`). Model-generated scripts run, but in an opaque origin: no `document.cookie`, no CRM `localStorage`, no DOM access to the parent.
+2. **Header defence in depth** on every file the preview route serves: `Content-Security-Policy: sandbox allow-scripts; connect-src 'none'; form-action 'none'; frame-ancestors 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: private, no-store`. So even a demo file opened directly in a tab is sandboxed. `connect-src 'none'` stops demo scripts from calling the CRM API or anything else with fetch/XHR/beacon. Helmet's own CSP and `Cross-Origin-Resource-Policy: same-origin` are overridden on these responses (`cross-origin` is required, or the opaque-origin frame cannot load its images and CSS). Fonts load with CORS, so `Access-Control-Allow-Origin: *` is set (safe: the link is the credential, there are no cookies).
+3. **Access.** `leadgenDemos.previewLink({id})` (AuthMiddleware + SessionOnlyMiddleware, no REST) returns `{path, expiresAt}`. The path holds an HMAC token (`slug`, `mode`, `exp`; 15 minutes). The key is 32 random bytes made when the API starts, so a restart invalidates all links and no secret is stored anywhere. The token grants read of that one slug folder and nothing else. The route is `@AllowAnonymous()` for that reason and is the only such route in the leadgen module.
+4. **Editing.** Approvers get an `edit` token. For HTML files only, the route injects a small bridge script (`data-leadgen-bridge`). It answers only messages whose `event.source` is `window.parent` and that carry `{leadgen:1}`: `edit` toggles `designMode`, `get-html` returns the serialized document (with the bridge removed) tagged with the caller's nonce. The parent accepts a reply only when `event.source` is the frame's `contentWindow`, the nonce matches a pending request, and the type is `html`. Nothing in the frame can call tRPC (`connect-src 'none'`), and the frame never holds a session.
+5. **What a hostile demo script could still do:** answer `get-html` with different HTML than it shows. That HTML is then saved into that demo's own file, only after an approver clicks Save, and it passes the same size/shape checks. The blast radius is the demo being edited. The server also strips the bridge if it comes back and refuses HTML that still names it.
+6. **Save path.** Serialized HTML goes browser -> tRPC `leadgenDemos.save`. The frame never talks to the server.
+
+## API (apps/api/src/leadgen)
+
+| File | Purpose |
+| --- | --- |
+| `outbound-guard.ts` | Pure host/IP classification (v4 and v6, embedded v4, `.local/.internal/.ts.net`, single-label hosts, credentials) plus `fetchPublic`: resolve, refuse if ANY address is non-public, pin the connection to the validated address, manual redirects (max 5) re-checked per hop, byte cap, time cap. Resolver and transport are injected so tests never touch a network. |
+| `site-audit.ts` | Pure `scoreSite(html, target)` and `auditFailure`. Signals, weights, thresholds and messages copied from the old handler, quirks included. |
+| `site-audit.service.ts`, `site-audit.router.ts` | `leadgenAudit.run({id})`. Looks up the lead's own website, normalizes with the existing `safeHttpUrl`, calls `fetchPublic` (2 MB, 10 s), scores. Max 3 audits at once. |
+| `demo-files.ts` | The only file that touches demo files. `resolveDemoDir`, `resolveDemoFile` (segment walk with `lstat`, no symlinks, `realpath` inside the folder, no dotfiles, no backup pattern), MIME table, `saveDemoHtml` (validation, backup, temp file + rename in the same folder, prune to last 10 backups matching `^index\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.bak\.html$`). |
+| `demo-bridge.ts` | Bridge script text, `injectBridge`, `stripBridge`. |
+| `demo-preview-token.ts` | `mintToken`, `verifyToken` (HMAC-SHA256, `timingSafeEqual`, expiry). |
+| `demo-edit.service.ts` | `previewLink`, `info`, `save`. Save order: policy (`LEADGEN_DECISION_APPROVERS`, unset refuses) -> replay by `requestId` -> lead + slug -> resolve dir -> in-process per-slug lock -> current sha256 must equal the page's `baseSha256` -> validate -> **audit row (PENDING: who, slug, bytes and sha256 before/after, backup name)** -> backup -> atomic write -> read back and compare sha256 -> audit APPLIED. A failed write is FAILED, an ambiguous one UNKNOWN, never retried. |
+| `demo-edit.router.ts` | Alias `leadgenDemos`. Session-only. Only caller of the service. |
+| `demo-preview.controller.ts` | `GET api/leadgen/demo-preview/:token/*`. Read only. Token check, resolve, headers above. |
+| `packages/db` | Model `LgDemoEdit` (reuses enum `LgDecisionStatus`), migration `20260921000000_leadgen_demo_edit` (create table only, additive). Applied to `crm_dev` only. |
+
+## App (apps/app/app/(app)/[slug]/leadgen)
+
+- `demo-local-pane.tsx`: "Local copy" view in the Review demo pane: sandboxed frame, edit toggle, Save, status ("Saved locally, not yet live", deploy command, backup name), refresh link when the token expires.
+- `site-audit-panel.tsx`: Audit button + result (priority colour, score, signals) used by Review and Triage.
+- Review and Triage: auto-advance to the next card after a saved decision; the "editing and audits stay in the old dashboard" note is replaced.
+- Screenshots: not built (blocked).
+
+## Order of work
+
+1. Commit spec, parity table, this plan.
+2. `outbound-guard` + tests, then `site-audit` + the old-code fixture test. Break-on-purpose runs for both.
+3. `demo-files`, `demo-bridge`, `demo-preview-token` + tests (temp dirs only). Break-on-purpose.
+4. Migration on `crm_dev`; `demo-edit` service, router, controller, module; structural door spec; `trpc:generate`.
+5. Live checks: `crm_dev` + temp output dir for save; real loopback/private/metadata probes and one public URL for the guard.
+6. App components, render tests, `next build`.
+7. All gates. Commit in logical units, explicit paths, `git commit -F`, no trailer.
+
+## Tests that prove it
+
+- Guard: refuses `http://127.0.0.1:3041/`, `http://100.78.149.77:8768/`, `http://169.254.169.254/`, `http://localhost/`, a hostname resolving to a private address, and a public URL that redirects to `http://127.0.0.1/` (the transport is asserted to be called once). Plus IPv6, mapped v4, decimal/hex/octal IP forms, `.local`, `.internal`, `.ts.net`, credentials, redirect cap, byte cap, timeout, DNS rebinding pin.
+- Audit: fixtures run through the real old handler (extracted from `review-server.js` into a `vm`, stub `fetch`) and the port; outputs deep-equal over an exhaustive signal grid, the WordPress precedence cases, and a seeded random set; error shape equal.
+- Files: traversal, symlink (file and directory), absolute path, encoded dots, NUL, dotfile, backup-name refusal, size and shape limits, backup before write, prune keeps 10 and touches only pattern matches, temp file cleaned on failure.
+- Service: non-approver, unset allowlist, stale `baseSha256`, unknown slug, slug outside the output dir, audit row exists before the write, failed write, replay, in-flight lock.
+- Structural: only `demo-files.ts` writes files; only the service imports it; router session-only with no REST; the only anonymous route is the preview controller and it has no write; contracts have no `url`, `path`, `slug` or `reviewer` field.
+- Existing gates untouched: no-send spec, job wiring, decision door.
+
+## Risks
+
+- Real-browser behaviour of the sandbox, the bridge and CORP/CORS on assets is not testable here (no runnable browser). It is covered by header assertions and a bridge test against a fake window, and reported as NOT verified.
+- The audit fetch must not be a way into the tailnet: see "Residual SSRF risk" in the as-built section.
+- Complexity cap 62: pure helpers.
