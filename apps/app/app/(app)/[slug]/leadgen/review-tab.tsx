@@ -8,8 +8,9 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTRPC } from "@/lib/trpc/client";
 import type { RouterOutputs } from "@/lib/trpc/types";
+import { LocalDemoPane } from "./demo-local-pane";
 import { type Applied, LeadActions } from "./lead-actions";
-import { effectiveLead } from "./lead-actions-state";
+import { effectiveLead, nextIdAfter } from "./lead-actions-state";
 import {
 	CONTROL_CLASS,
 	DecisionBadge,
@@ -19,11 +20,9 @@ import {
 	QaBadge,
 	SectionTitle,
 } from "./lead-parts";
-import {
-	MirrorFreshness,
-	useDebounced,
-	useOldDashboard,
-} from "./leadgen-format";
+import { MirrorFreshness, useDebounced } from "./leadgen-format";
+import { SiteAuditPanel } from "./site-audit-panel";
+import { SiteShot } from "./site-shot-panel";
 
 type Row = RouterOutputs["leadgen"]["reviewList"]["rows"][number];
 type Detail = NonNullable<RouterOutputs["leadgen"]["leadDetail"]>;
@@ -79,6 +78,13 @@ export function ReviewTab() {
 			setPage(1);
 			setSelectedId(null);
 		};
+	const advance = (leadId: string) => {
+		const next = nextIdAfter(
+			rows.map((r) => r.id),
+			leadId,
+		);
+		if (next && leadId === selectedId) setSelectedId(next);
+	};
 	const step = (delta: number) => {
 		const next = rows[index + delta];
 		if (next) setSelectedId(next.id);
@@ -174,7 +180,10 @@ export function ReviewTab() {
 							id={selectedId}
 							row={selected}
 							applied={applied[selectedId]}
-							onApplied={(r) => setApplied((p) => ({ ...p, [r.leadId]: r }))}
+							onApplied={(r) => {
+								setApplied((p) => ({ ...p, [r.leadId]: r }));
+								advance(r.leadId);
+							}}
 							hasPrev={index > 0}
 							hasNext={index >= 0 && index < rows.length - 1}
 							onPrev={() => step(-1)}
@@ -259,7 +268,6 @@ export function DemoDetail({
 	onBack: () => void;
 }) {
 	const trpc = useTRPC();
-	const old = useOldDashboard();
 	const [pane, setPane] = useState<"new" | "old">("new");
 	const [showDraft, setShowDraft] = useState(false);
 	const detail = useQuery(trpc.leadgen.leadDetail.queryOptions({ id }));
@@ -317,15 +325,15 @@ export function DemoDetail({
 					className={cn("min-w-0", pane === "new" ? "hidden lg:block" : "")}
 				>
 					<OldSitePane
+						leadId={id}
 						name={name}
 						oldSite={lead?.oldSite ?? row?.oldSite ?? null}
-						preview={old.preview}
 					/>
 				</section>
 				<section
 					className={cn("min-w-0", pane === "old" ? "hidden lg:block" : "")}
 				>
-					<DemoPane name={name} demoUrl={demoUrl} />
+					<DemoPane leadId={id} name={name} demoUrl={demoUrl} />
 				</section>
 			</div>
 			{row?.qa.status === "FAIL" ? (
@@ -356,23 +364,6 @@ export function DemoDetail({
 					onApplied={onApplied}
 				/>
 			) : null}
-			<p className="text-[11px] text-muted-foreground">
-				Inline demo editing, site audits and screenshots stay in the old
-				dashboard.
-				{old.home ? (
-					<>
-						{" "}
-						<a
-							className="underline"
-							href={old.home}
-							target="_blank"
-							rel="noreferrer noopener"
-						>
-							Open the review dashboard
-						</a>
-					</>
-				) : null}
-			</p>
 		</div>
 	);
 }
@@ -424,12 +415,33 @@ function DetailBody({
 	);
 }
 
-function DemoPane({ name, demoUrl }: { name: string; demoUrl: string | null }) {
+function DemoPane({
+	leadId,
+	name,
+	demoUrl,
+}: {
+	leadId: string;
+	name: string;
+	demoUrl: string | null;
+}) {
+	const [view, setView] = useState<"live" | "local">("live");
 	return (
 		<div className="flex flex-col gap-2">
-			<div className="flex items-center justify-between gap-2">
+			<div className="flex flex-wrap items-center justify-between gap-2">
 				<SectionTitle>New demo</SectionTitle>
-				{demoUrl ? (
+				<span className="flex gap-1">
+					{(["live", "local"] as const).map((v) => (
+						<Button
+							key={v}
+							size="sm"
+							variant={view === v ? "default" : "outline"}
+							onClick={() => setView(v)}
+						>
+							{v === "live" ? "Live (what leads see)" : "Local copy (editable)"}
+						</Button>
+					))}
+				</span>
+				{view === "live" && demoUrl ? (
 					<a
 						className="text-xs underline"
 						href={demoUrl}
@@ -440,7 +452,9 @@ function DemoPane({ name, demoUrl }: { name: string; demoUrl: string | null }) {
 					</a>
 				) : null}
 			</div>
-			{demoUrl ? (
+			{view === "local" ? (
+				<LocalDemoPane key={leadId} leadId={leadId} name={name} />
+			) : demoUrl ? (
 				<iframe
 					title={`New demo for ${name}`}
 					src={demoUrl}
@@ -460,16 +474,15 @@ function DemoPane({ name, demoUrl }: { name: string; demoUrl: string | null }) {
 }
 
 function OldSitePane({
+	leadId,
 	name,
 	oldSite,
-	preview,
 }: {
+	leadId: string;
 	name: string;
 	oldSite: string | null;
-	preview: (url: string) => string | null;
 }) {
 	const [embed, setEmbed] = useState(false);
-	const previewUrl = oldSite ? preview(oldSite) : null;
 	const embeddable = oldSite?.startsWith("https://") ?? false;
 	return (
 		<div className="flex flex-col gap-2">
@@ -484,19 +497,14 @@ function OldSitePane({
 					>
 						{oldSite}
 					</a>
+					<SiteShot key={leadId} leadId={leadId} name={name} />
+					<SiteAuditPanel key={`audit-${leadId}`} leadId={leadId} />
 					<div className="flex flex-wrap gap-2">
 						<Button size="sm" variant="outline" asChild>
 							<a href={oldSite} target="_blank" rel="noreferrer noopener">
 								Open their site
 							</a>
 						</Button>
-						{previewUrl ? (
-							<Button size="sm" variant="outline" asChild>
-								<a href={previewUrl} target="_blank" rel="noreferrer noopener">
-									Preview (old dashboard)
-								</a>
-							</Button>
-						) : null}
 						{embeddable ? (
 							<Button
 								size="sm"
@@ -508,8 +516,8 @@ function OldSitePane({
 						) : null}
 					</div>
 					<p className="text-muted-foreground">
-						Many sites refuse to be framed. The CRM does not proxy them, so use
-						the links when the frame stays blank.
+						Many sites refuse to be framed, so the picture above is the
+						dependable view. The CRM does not proxy their pages.
 					</p>
 				</div>
 			) : (

@@ -8,7 +8,7 @@ import { useState } from "react";
 import { useTRPC } from "@/lib/trpc/client";
 import type { RouterOutputs } from "@/lib/trpc/types";
 import { type Applied, LeadActions } from "./lead-actions";
-import { effectiveLead } from "./lead-actions-state";
+import { effectiveLead, nextIdAfter } from "./lead-actions-state";
 import {
 	CONTROL_CLASS,
 	DecisionBadge,
@@ -18,11 +18,9 @@ import {
 	ScoreBadge,
 	SectionTitle,
 } from "./lead-parts";
-import {
-	MirrorFreshness,
-	useDebounced,
-	useOldDashboard,
-} from "./leadgen-format";
+import { MirrorFreshness, useDebounced } from "./leadgen-format";
+import { SiteAuditPanel } from "./site-audit-panel";
+import { SiteShot } from "./site-shot-panel";
 
 type Row = RouterOutputs["leadgen"]["triageList"]["rows"][number];
 
@@ -216,7 +214,14 @@ export function TriageTab({
 							id={selectedId}
 							row={selected}
 							applied={applied[selectedId]}
-							onApplied={(r) => setApplied((p) => ({ ...p, [r.leadId]: r }))}
+							onApplied={(r) => {
+								setApplied((p) => ({ ...p, [r.leadId]: r }));
+								const next = nextIdAfter(
+									(list.data?.rows ?? []).map((row) => row.id),
+									r.leadId,
+								);
+								if (next && r.leadId === selectedId) setSelectedId(next);
+							}}
 							onBack={() => setSelectedId(null)}
 						/>
 					) : (
@@ -301,7 +306,6 @@ function ProspectDetail({
 	onBack: () => void;
 }) {
 	const trpc = useTRPC();
-	const old = useOldDashboard();
 	const detail = useQuery(trpc.leadgen.leadDetail.queryOptions({ id }));
 	const found = detail.data ?? row;
 	if (!found) {
@@ -326,8 +330,6 @@ function ProspectDetail({
 		);
 	}
 	const lead = effectiveLead(found, applied);
-	const shot = lead.oldSite ? old.screenshot(lead.oldSite) : null;
-	const preview = lead.oldSite ? old.preview(lead.oldSite) : null;
 	return (
 		<div className="flex min-w-0 flex-col gap-3 rounded-md border border-border p-3">
 			<Button
@@ -355,26 +357,14 @@ function ProspectDetail({
 					>
 						{lead.oldSite}
 					</a>
+					<SiteShot key={lead.id} leadId={lead.id} name={lead.businessName} />
+					<SiteAuditPanel key={`audit-${lead.id}`} leadId={lead.id} />
 					<div className="flex flex-wrap gap-2">
 						<Button size="sm" variant="outline" asChild>
 							<a href={lead.oldSite} target="_blank" rel="noreferrer noopener">
 								Open their site
 							</a>
 						</Button>
-						{shot ? (
-							<Button size="sm" variant="outline" asChild>
-								<a href={shot} target="_blank" rel="noreferrer noopener">
-									Screenshot (old dashboard)
-								</a>
-							</Button>
-						) : null}
-						{preview ? (
-							<Button size="sm" variant="outline" asChild>
-								<a href={preview} target="_blank" rel="noreferrer noopener">
-									Preview (old dashboard)
-								</a>
-							</Button>
-						) : null}
 					</div>
 				</div>
 			) : (

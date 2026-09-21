@@ -57,3 +57,12 @@ export function armsOnApprove(
 ): boolean {
 	return stage === "review" && table === "isp";
 }
+
+export function nextIdAfter(
+	ids: readonly string[],
+	currentId: string,
+): string | null {
+	const at = ids.indexOf(currentId);
+	if (at < 0) return null;
+	return ids[at + 1] ?? ids[at - 1] ?? null;
+}

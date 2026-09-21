@@ -153,6 +153,28 @@ const FIXTURES: Record<string, unknown> = {
 		},
 	},
 	leadDetail: detail,
+	"leadgenShots.status": {
+		available: true,
+		unavailableReason: null,
+		cached: true,
+		capturedAt: "2026-09-21T10:00:00.000Z",
+		stale: false,
+		url: "https://old-alpha.example.com/",
+	},
+	"leadgenDemos.info": {
+		hasLocal: true,
+		slug: "alpha-demo",
+		reason: null,
+		bytes: 1000,
+		sha256: "a".repeat(64),
+		modifiedAt: "2026-09-20T10:00:00.000Z",
+		canEdit: true,
+		editProblem: null,
+		keepBackups: 10,
+		lastEdit: null,
+		deployHint:
+			"cd /data/leadgen/site-generator && bash deploy-demo.sh alpha-demo",
+	},
 	opsOverview: {
 		generatedAt: "2026-09-20T15:00:00.000Z",
 		totals,
@@ -222,10 +244,12 @@ function node(path: string[]): unknown {
 		get: (_t, key: string) => {
 			if (key === "queryOptions") {
 				const name = path[path.length - 1] ?? "";
+				const scoped = path.slice(-2).join(".");
+				const data = scoped in FIXTURES ? FIXTURES[scoped] : FIXTURES[name];
 				return (input?: unknown) => ({
 					queryKey: [...path, input ?? null],
-					queryFn: async () => FIXTURES[name],
-					initialData: FIXTURES[name],
+					queryFn: async () => data,
+					initialData: data,
 				});
 			}
 			return node([...path, key]);
@@ -243,6 +267,12 @@ const { ReviewTab, DemoDetail } = await import(
 	"../app/(app)/[slug]/leadgen/review-tab"
 );
 const { OpsTab } = await import("../app/(app)/[slug]/leadgen/ops-tab");
+const { LocalDemoPane } = await import(
+	"../app/(app)/[slug]/leadgen/demo-local-pane"
+);
+const { SiteShot } = await import(
+	"../app/(app)/[slug]/leadgen/site-shot-panel"
+);
 
 import type { ActionLead } from "../app/(app)/[slug]/leadgen/lead-actions-state";
 
@@ -571,5 +601,168 @@ describe("decision actions", () => {
 			},
 		);
 		expect(out).not.toContain("send approved</span>");
+	});
+});
+
+describe("Review detail, 2b additions", () => {
+	const out = html(
+		<DemoDetail
+			id="lead-1"
+			row={reviewRow as never}
+			applied={undefined}
+			onApplied={() => undefined}
+			hasPrev={false}
+			hasNext={true}
+			onPrev={() => undefined}
+			onNext={() => undefined}
+			onBack={() => undefined}
+		/>,
+	);
+
+	test("offers the live demo and the editable local copy, live first", () => {
+		expect(out).toContain("Live (what leads see)");
+		expect(out).toContain("Local copy (editable)");
+		expect(out.indexOf("Live (what leads see)")).toBeLessThan(
+			out.indexOf("Local copy (editable)"),
+		);
+	});
+
+	test("shows their site as a cached screenshot from the CRM's own image route", () => {
+		expect(out).toContain(
+			'src="/api/leadgen/shot/lead-1?v=2026-09-21T10%3A00%3A00.000Z"',
+		);
+		expect(out).toContain("Screenshot of their live site");
+		expect(out).toContain(">Re-capture<");
+	});
+
+	test("has an audit button", () => {
+		expect(out).toContain(">Audit their site<");
+	});
+
+	test("no longer points at the old dashboard or its proxy", () => {
+		expect(out).not.toMatch(/old dashboard|:8767|\/old\/\?u=|api\/shot\?url/i);
+	});
+
+	test("keeps exactly one iframe, the sandboxed Cloudflare demo", () => {
+		expect((out.match(/<iframe/g) ?? []).length).toBe(1);
+	});
+});
+
+describe("Triage detail, 2b additions", () => {
+	test("shows the screenshot and audit, and no old-dashboard links", async () => {
+		const { TriageTab: Triage } = await import(
+			"../app/(app)/[slug]/leadgen/triage-tab"
+		);
+		FIXTURES.triageList = {
+			rows: [
+				{
+					...identity,
+					notes: "",
+					notesTruncated: false,
+					updatedAt: "2026-09-20T12:00:00.000Z",
+				},
+			],
+			total: 1,
+			facetCounts: { decision: { all: 1 }, table: { isp: 1 } },
+		};
+		try {
+			const out = html(<Triage />);
+			expect(out).toContain("Alpha Plumbing");
+		} finally {
+			FIXTURES.triageList = {
+				rows: [],
+				total: 0,
+				facetCounts: {
+					decision: { Approved: 288, Rejected: 203, all: 491 },
+					table: { isp: 318, gym: 173 },
+				},
+			};
+		}
+	});
+	test("the triage source has no old-dashboard link left", () => {
+		const source = readFileSync(
+			join(import.meta.dir, "../app/(app)/[slug]/leadgen/triage-tab.tsx"),
+			"utf8",
+		);
+		expect(source).not.toMatch(
+			/useOldDashboard|old\.(preview|screenshot|home)/,
+		);
+		expect(source).toContain("<SiteShot");
+		expect(source).toContain("<SiteAuditPanel");
+	});
+});
+
+describe("local copy pane", () => {
+	const out = html(<LocalDemoPane leadId="lead-1" name="Alpha Plumbing" />);
+	test("offers editing to an approver and says nothing is live", () => {
+		expect(out).toContain(">Edit text<");
+		expect(out).toContain("deploy-demo.sh alpha-demo");
+		expect(out).toContain("no access to your CRM session");
+	});
+	test("a non-approver gets no edit button and is told why", () => {
+		const base = FIXTURES["leadgenDemos.info"] as Record<string, unknown>;
+		FIXTURES["leadgenDemos.info"] = {
+			...base,
+			canEdit: false,
+			editProblem: "This account is not an approved decision maker.",
+		};
+		try {
+			const view = html(<LocalDemoPane leadId="lead-1" name="Alpha" />);
+			expect(view).not.toContain(">Edit text<");
+			expect(view).toContain("not an approved decision maker");
+		} finally {
+			FIXTURES["leadgenDemos.info"] = base;
+		}
+	});
+	test("no local build says so instead of showing an empty frame", () => {
+		const base = FIXTURES["leadgenDemos.info"] as Record<string, unknown>;
+		FIXTURES["leadgenDemos.info"] = {
+			...base,
+			hasLocal: false,
+			reason: "no local build for this slug",
+		};
+		try {
+			const view = html(<LocalDemoPane leadId="lead-1" name="Alpha" />);
+			expect(view).toContain("No local build for this lead yet");
+			expect(view).not.toContain("<iframe");
+		} finally {
+			FIXTURES["leadgenDemos.info"] = base;
+		}
+	});
+});
+
+describe("screenshot panel", () => {
+	test("says so plainly when the host has no browser", () => {
+		const base = FIXTURES["leadgenShots.status"] as Record<string, unknown>;
+		FIXTURES["leadgenShots.status"] = {
+			...base,
+			available: false,
+			unavailableReason: "The headless browser is not installed on this host.",
+			cached: false,
+			capturedAt: null,
+		};
+		try {
+			const view = html(<SiteShot leadId="lead-1" name="Alpha" />);
+			expect(view).toContain("not installed on this host");
+			expect(view).toContain("Open their site");
+			expect(view).not.toContain("<img");
+		} finally {
+			FIXTURES["leadgenShots.status"] = base;
+		}
+	});
+	test("offers a manual button when nothing is cached yet", () => {
+		const base = FIXTURES["leadgenShots.status"] as Record<string, unknown>;
+		FIXTURES["leadgenShots.status"] = {
+			...base,
+			cached: false,
+			capturedAt: null,
+		};
+		try {
+			expect(html(<SiteShot leadId="lead-1" name="Alpha" />)).toContain(
+				">Take a screenshot<",
+			);
+		} finally {
+			FIXTURES["leadgenShots.status"] = base;
+		}
 	});
 });
