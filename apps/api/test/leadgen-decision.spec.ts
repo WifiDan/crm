@@ -495,6 +495,7 @@ describe("who may decide", () => {
 			else process.env.LEADGEN_DECISION_APPROVERS = value;
 			const w = makeWorld();
 			await expect(decide(w)).rejects.toBeInstanceOf(ForbiddenException);
+			await expect(decide(w)).rejects.toThrow(/switched off/);
 			await expect(rework(w)).rejects.toBeInstanceOf(ForbiddenException);
 			untouched(w);
 		});
