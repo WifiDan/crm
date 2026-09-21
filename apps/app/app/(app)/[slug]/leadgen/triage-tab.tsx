@@ -43,7 +43,7 @@ const SORTS = [
 
 export function TriageTab() {
 	const trpc = useTRPC();
-	const [decision, setDecision] = useState<Decision>("undecided");
+	const [decision, setDecision] = useState<Decision>("all");
 	const [table, setTable] = useState<"" | "isp" | "gym">("");
 	const [campaignId, setCampaignId] = useState("");
 	const [marketId, setMarketId] = useState("");
