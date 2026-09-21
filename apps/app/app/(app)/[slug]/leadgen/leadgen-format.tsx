@@ -5,12 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useTRPC } from "@/lib/trpc/client";
 
-export const OLD_DASHBOARD = {
-	protocol: "http:",
-	reviewPort: 8767,
-	opsPort: 8768,
-} as const;
-
 export const MIRROR_STALE_MINUTES = 30;
 
 export const SEARCH_DEBOUNCE_MS = 300;
@@ -41,21 +35,6 @@ export function poolLabel(table: string | null): string {
 	if (table === "isp") return "ISP";
 	if (table === "gym") return "Gym";
 	return "Other";
-}
-
-export function useOldDashboard(port: number = OLD_DASHBOARD.reviewPort) {
-	const [origin, setOrigin] = useState<string | null>(null);
-	useEffect(() => {
-		setOrigin(`${OLD_DASHBOARD.protocol}//${window.location.hostname}:${port}`);
-	}, [port]);
-	return {
-		home: origin,
-		triage: origin ? `${origin}/prospects` : null,
-		preview: (url: string) =>
-			origin ? `${origin}/old/?u=${encodeURIComponent(url)}` : null,
-		screenshot: (url: string) =>
-			origin ? `${origin}/api/shot?url=${encodeURIComponent(url)}` : null,
-	};
 }
 
 export function MirrorFreshness({ writes = false }: { writes?: boolean }) {

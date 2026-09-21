@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	acceptBridgeMessage,
@@ -180,5 +180,21 @@ describe("audit display", () => {
 		expect(v.headline).toBe("Audit failed");
 		expect(v.empty).toBeNull();
 		expect(v.lines).toEqual(["Could not audit: refused: x"]);
+	});
+});
+
+describe("nothing in the console points at the old dashboards any more", () => {
+	test("no file under the leadgen folder names the old ports or their routes", () => {
+		const files = readdirSync(DIR).filter((f) => /\.(ts|tsx)$/.test(f));
+		expect(files.length).toBeGreaterThan(15);
+		for (const f of files) {
+			const code = read(f);
+			expect({
+				f,
+				hit: /8767|8768|OLD_DASHBOARD|useOldDashboard|\/old\/\?u=|api\/shot\?url=/.test(
+					code,
+				),
+			}).toEqual({ f, hit: false });
+		}
 	});
 });
