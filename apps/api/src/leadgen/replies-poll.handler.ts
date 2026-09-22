@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
+import type { Readable } from "node:stream";
 import { type Db } from "@crm/db";
 import { Injectable, Logger } from "@nestjs/common";
 import { ImapFlow } from "imapflow";
-import { simpleParser } from "mailparser";
 import { InjectDatabase } from "../database/database.constants";
 import { MAX_ATTEMPTS, withImapRetry } from "./imap-retry";
 import type { LgJobContext, LgJobHandler, LgJobResult } from "./job-handler";
@@ -15,10 +15,20 @@ import {
 	norm,
 } from "./reply-match";
 import {
+	bodyFromDownload,
+	chooseFetchMode,
+	envelopeDate,
+	type FetchMode,
+	incrementalRange,
+	type LastPollState,
+	mailFromStructure,
+	type ParsedMail,
+	pickTextPart,
+	type StructureEntry,
+} from "./reply-poll-fetch";
+import {
 	classifyInbound,
-	htmlToText,
 	type InboundClassification,
-	referencedMessageIds,
 	shouldKeepExistingJudgement,
 } from "./reply-rules";
 import {
@@ -36,13 +46,9 @@ const STOP_STATE_PATH =
 	"/data/leadgen/scripts/stop_reply_state.json";
 const MAX_MESSAGES = 600;
 const MAX_SENT = 2000;
-
-/** imapflow gives a Date or a string; anything unparseable is treated as unknown, never guessed. */
-function envelopeDate(v: Date | string | undefined): Date | null {
-	if (!v) return null;
-	const d = v instanceof Date ? v : new Date(v);
-	return Number.isNaN(d.getTime()) ? null : d;
-}
+/** Caps a single text part's download; only guards a pathological message - store() already
+ *  truncates bodyText to 20,000 chars, so this never changes stored output for a real reply. */
+const BODY_MAX_BYTES = 2_000_000;
 
 type PythonReplied = { leads?: Record<string, { message_ids?: string[] }> };
 type PythonStopState = { processed_message_ids?: string[] };
@@ -70,17 +76,14 @@ type Counters = {
 	answeredAddress: number;
 	/** How many connections the INBOX read took (1 = no retry). */
 	imapAttempts: number;
-};
-
-type ParsedMail = {
-	uid: number;
-	messageId: string;
-	fromAddr: string;
-	subject: string;
-	body: string;
-	date: Date | null;
-	refs: string[];
-	headers: Record<string, string | undefined>;
+	/** "incremental" = only UIDs newer than the last stored cursor; "full" = the whole window. */
+	fetchMode: FetchMode;
+	/** The IMAP UIDVALIDITY seen this run, so the next run can tell if the mailbox was recreated. */
+	imapUidValidity: string;
+	/** Actual bytes pulled off the wire for message bodies this run (the acceptance-criteria number). */
+	bytesDownloaded: number;
+	/** Informational: what a full-window fetch of this run's candidate messages would have cost. */
+	bytesWouldFetchFull: number;
 };
 
 type PythonView = { processed: Set<string>; repliedMids: Set<string> };
@@ -108,38 +111,12 @@ async function loadPythonView(): Promise<PythonView> {
 	};
 }
 
-const AUTO_HEADERS = [
-	"auto-submitted",
-	"x-autoreply",
-	"x-autorespond",
-	"x-auto-response-suppress",
-	"x-vacation-message",
-	"precedence",
-] as const;
-
-async function parseMail(
-	uid: number,
-	source: Buffer,
-): Promise<ParsedMail | null> {
-	const p = await simpleParser(source);
-	if (!p.messageId) return null;
-	const headers: Record<string, string | undefined> = {};
-	for (const name of AUTO_HEADERS) {
-		const v = p.headers.get(name);
-		headers[name] = v === undefined ? undefined : String(v);
+async function streamToBuffer(stream: Readable): Promise<Buffer> {
+	const chunks: Buffer[] = [];
+	for await (const chunk of stream) {
+		chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
 	}
-	return {
-		uid,
-		messageId: norm(p.messageId),
-		fromAddr: norm(p.from?.value[0]?.address ?? ""),
-		subject: p.subject ?? "",
-		body: p.text?.trim()
-			? p.text
-			: htmlToText(typeof p.html === "string" ? p.html : ""),
-		date: p.date ?? null,
-		refs: referencedMessageIds(p.inReplyTo ?? null, p.references ?? null),
-		headers,
-	};
+	return Buffer.concat(chunks);
 }
 
 /**
@@ -151,6 +128,12 @@ async function parseMail(
  * It also reads the Sent folder and records, on lg_inbound_message only, which threads Danio already
  * answered from his mail app. The Python scanners stay authoritative. What this job adds is a per-run comparison against their
  * state files, which is the evidence the cutover gate is judged on.
+ *
+ * Only new mail is fetched (cursor = MAX(imapUid) already stored + the IMAP UIDVALIDITY from the
+ * last successful run), and only text/plain or text/html body parts are downloaded - never
+ * attachments. A full 14-day window re-fetch still runs at least once a day, and any time the
+ * cursor can't be trusted (first run, mailbox recreated), so a missed message is always caught
+ * within a day. See intent/leadgen-poll-incremental-fetch/ for why and the full design.
  */
 @Injectable()
 export class RepliesPollHandler implements LgJobHandler {
@@ -169,11 +152,13 @@ export class RepliesPollHandler implements LgJobHandler {
 		}
 		const days = Number(process.env.LEADGEN_REPLIES_SINCE_DAYS ?? "14");
 		const since = new Date(Date.now() - days * 86_400_000);
+		const lastState = await this.loadLastPollState();
 		const mailbox = await this.fetchMailbox({
 			host: process.env.ZOHO_IMAP_HOST ?? "imappro.zoho.com",
 			user,
 			pass,
 			since,
+			lastState,
 			ctx,
 		});
 		const raw = mailbox.inbox;
@@ -202,13 +187,17 @@ export class RepliesPollHandler implements LgJobHandler {
 			answeredThread: 0,
 			answeredAddress: 0,
 			imapAttempts: mailbox.attempts,
+			fetchMode: mailbox.fetchMode,
+			imapUidValidity: mailbox.uidValidity,
+			bytesDownloaded: mailbox.bytesDownloaded,
+			bytesWouldFetchFull: mailbox.bytesWouldFetchFull,
 		};
 		const seen = new Set<string>();
 		const crmReplies = new Set<string>();
 
 		for (const m of raw) {
 			if (ctx.signal.aborted) throw new Error("aborted");
-			const mail = await parseMail(m.uid, m.source);
+			const mail = mailFromStructure(m.entry, m.body);
 			if (!mail) {
 				c.noMessageId++;
 				continue;
@@ -235,6 +224,33 @@ export class RepliesPollHandler implements LgJobHandler {
 		if (mailbox.sent) await this.applyAnswers(mailbox.sent, since, c);
 		this.logger.log(`replies.poll ${JSON.stringify(c)}`);
 		return { counters: c };
+	}
+
+	/** No new state table (spec.md §1): the cursor is derived from data already stored. */
+	private async loadLastPollState(): Promise<LastPollState> {
+		const [lastOk, lastFull, maxUid] = await Promise.all([
+			this.db.lgJobRun.findFirst({
+				where: { status: "OK", job: { name: "replies.poll" } },
+				orderBy: { startedAt: "desc" },
+				select: { counters: true },
+			}),
+			this.db.lgJobRun.findFirst({
+				where: {
+					status: "OK",
+					job: { name: "replies.poll" },
+					counters: { path: ["fetchMode"], equals: "full" },
+				},
+				orderBy: { startedAt: "desc" },
+				select: { startedAt: true },
+			}),
+			this.db.lgInboundMessage.aggregate({ _max: { imapUid: true } }),
+		]);
+		const counters = lastOk?.counters as { imapUidValidity?: string } | null;
+		return {
+			uidValidity: counters?.imapUidValidity ?? null,
+			lastUid: maxUid._max.imapUid ?? null,
+			lastFullAt: lastFull?.startedAt ?? null,
+		};
 	}
 
 	private async loadIndexes(): Promise<MatchIndexes> {
@@ -423,9 +439,10 @@ export class RepliesPollHandler implements LgJobHandler {
 	}
 
 	/**
-	 * One try at the front half: a fresh connection, INBOX opened and read into memory. It has no
-	 * side effect outside its own socket (every database write in run() happens after fetchMailbox
-	 * returns), so a failed try is simply discarded and can be repeated from scratch.
+	 * One try at the front half: a fresh connection, INBOX opened, cursor decided, and only the
+	 * new-or-in-window messages' text bodies read into memory. It has no side effect outside its
+	 * own socket (every database write in run() happens after fetchMailbox returns), so a failed
+	 * try is simply discarded and can be repeated from scratch.
 	 */
 	private async attemptInbox(
 		opts: {
@@ -433,16 +450,25 @@ export class RepliesPollHandler implements LgJobHandler {
 			user: string;
 			pass: string;
 			since: Date;
+			lastState: LastPollState;
 			ctx: LgJobContext;
 		},
 		attempt: number,
-	): Promise<{ client: ImapFlow; inbox: { uid: number; source: Buffer }[] }> {
+	): Promise<{
+		client: ImapFlow;
+		inbox: { entry: StructureEntry; body: string }[];
+		fetchMode: FetchMode;
+		uidValidity: string;
+		bytesDownloaded: number;
+		bytesWouldFetchFull: number;
+	}> {
 		const client = this.createClient(opts);
 		let phase = "connect";
 		try {
 			await client.connect();
 			phase = "inbox";
-			return { client, inbox: await this.readInbox(client, opts) };
+			const result = await this.readInbox(client, opts);
+			return { client, ...result };
 		} catch (e) {
 			this.logger.warn(
 				`replies.poll attempt ${attempt}/${MAX_ATTEMPTS} failed at ${phase}: ${String(e).slice(0, 140)}`,
@@ -461,14 +487,26 @@ export class RepliesPollHandler implements LgJobHandler {
 		user: string;
 		pass: string;
 		since: Date;
+		lastState: LastPollState;
 		ctx: LgJobContext;
 	}): Promise<{
-		inbox: { uid: number; source: Buffer }[];
+		inbox: { entry: StructureEntry; body: string }[];
 		sent: SentItem[] | null;
 		attempts: number;
+		fetchMode: FetchMode;
+		uidValidity: string;
+		bytesDownloaded: number;
+		bytesWouldFetchFull: number;
 	}> {
 		const {
-			value: { client, inbox },
+			value: {
+				client,
+				inbox,
+				fetchMode,
+				uidValidity,
+				bytesDownloaded,
+				bytesWouldFetchFull,
+			},
 			attempts,
 		} = await withImapRetry(
 			(n) => this.attemptInbox(opts, n),
@@ -481,7 +519,15 @@ export class RepliesPollHandler implements LgJobHandler {
 				this.logger.warn(`sent folder unreadable: ${String(e).slice(0, 140)}`);
 				return null;
 			});
-			return { inbox, sent, attempts };
+			return {
+				inbox,
+				sent,
+				attempts,
+				fetchMode,
+				uidValidity,
+				bytesDownloaded,
+				bytesWouldFetchFull,
+			};
 		} finally {
 			// Cleanup is best-effort: the server may already have dropped us after a complete fetch.
 			try {
@@ -492,27 +538,133 @@ export class RepliesPollHandler implements LgJobHandler {
 		}
 	}
 
+	/**
+	 * Opens INBOX, decides incremental vs full from the UIDVALIDITY/cursor this connection sees,
+	 * fetches envelope+bodyStructure+headers for the candidate range (cheap, no bodies), then
+	 * downloads only the text/plain or text/html part of each candidate (never attachments).
+	 */
 	private async readInbox(
 		client: ImapFlow,
-		opts: { since: Date; ctx: LgJobContext },
-	): Promise<{ uid: number; source: Buffer }[]> {
-		const out: { uid: number; source: Buffer }[] = [];
+		opts: { since: Date; lastState: LastPollState; ctx: LgJobContext },
+	): Promise<{
+		inbox: { entry: StructureEntry; body: string }[];
+		fetchMode: FetchMode;
+		uidValidity: string;
+		bytesDownloaded: number;
+		bytesWouldFetchFull: number;
+	}> {
 		const lock = await client.getMailboxLock("INBOX");
 		try {
-			for await (const msg of client.fetch(
-				{ since: opts.since },
-				{ uid: true, source: true },
-			)) {
-				if (opts.ctx.signal.aborted) throw new Error("aborted");
-				if (msg.source) out.push({ uid: msg.uid, source: msg.source });
-				if (out.length >= MAX_MESSAGES) break;
+			const mailbox = client.mailbox;
+			if (!mailbox || typeof mailbox === "boolean") {
+				throw new Error("INBOX did not select");
 			}
+			const uidValidity = mailbox.uidValidity.toString();
+			const mode = chooseFetchMode(opts.lastState, {
+				uidValidity: mailbox.uidValidity,
+				now: new Date(),
+			});
+			let structures: StructureEntry[];
+			if (mode === "full") {
+				structures = await this.readInboxStructures(
+					client,
+					{ since: opts.since },
+					opts.ctx,
+				);
+			} else {
+				const { hasNew, rangeUid } = incrementalRange(
+					opts.lastState.lastUid as number,
+					mailbox.uidNext,
+				);
+				structures = hasNew
+					? await this.readInboxStructures(client, { uid: rangeUid }, opts.ctx)
+					: [];
+			}
+			const bytesWouldFetchFull = structures.reduce(
+				(sum, s) => sum + (s.size ?? 0),
+				0,
+			);
+			const downloaded = await this.downloadTextParts(
+				client,
+				structures,
+				opts.ctx,
+			);
+			const bytesDownloaded = downloaded.reduce((sum, d) => sum + d.bytes, 0);
+			return {
+				inbox: downloaded.map((d) => ({ entry: d.entry, body: d.body })),
+				fetchMode: mode,
+				uidValidity,
+				bytesDownloaded,
+				bytesWouldFetchFull,
+			};
 		} finally {
 			try {
 				lock.release();
 			} catch {
 				// connection already gone
 			}
+		}
+	}
+
+	private async readInboxStructures(
+		client: ImapFlow,
+		range: { since: Date } | { uid: string },
+		ctx: LgJobContext,
+	): Promise<StructureEntry[]> {
+		const out: StructureEntry[] = [];
+		for await (const msg of client.fetch(range, {
+			uid: true,
+			envelope: true,
+			bodyStructure: true,
+			size: true,
+			headers: [
+				"auto-submitted",
+				"x-autoreply",
+				"x-autorespond",
+				"x-auto-response-suppress",
+				"x-vacation-message",
+				"precedence",
+				"references",
+				"in-reply-to",
+			],
+		})) {
+			if (ctx.signal.aborted) throw new Error("aborted");
+			out.push({
+				uid: msg.uid,
+				envelope: msg.envelope,
+				bodyStructure: msg.bodyStructure,
+				headers: msg.headers,
+				size: msg.size,
+			});
+			if (out.length >= MAX_MESSAGES) break;
+		}
+		return out;
+	}
+
+	private async downloadTextParts(
+		client: ImapFlow,
+		structures: StructureEntry[],
+		ctx: LgJobContext,
+	): Promise<{ entry: StructureEntry; body: string; bytes: number }[]> {
+		const out: { entry: StructureEntry; body: string; bytes: number }[] = [];
+		for (const entry of structures) {
+			if (ctx.signal.aborted) throw new Error("aborted");
+			const choice = pickTextPart(entry.bodyStructure);
+			if (!choice) {
+				out.push({ entry, body: "", bytes: 0 });
+				continue;
+			}
+			const { meta, content } = await client.download(entry.uid, choice.part, {
+				uid: true,
+				maxBytes: BODY_MAX_BYTES,
+			});
+			const buf = content ? await streamToBuffer(content) : Buffer.alloc(0);
+			const text = buf.toString("utf8");
+			out.push({
+				entry,
+				body: bodyFromDownload(text, choice.kind),
+				bytes: meta?.expectedSize ?? buf.length,
+			});
 		}
 		return out;
 	}

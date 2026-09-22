@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Readable } from "node:stream";
 import type { Db } from "@crm/db";
 import type { ImapFlow } from "imapflow";
 import { failureCounters } from "../src/leadgen/imap-retry";
@@ -7,7 +8,8 @@ import { LgJobSchedulerService } from "../src/leadgen/job-scheduler.service";
 import { RepliesPollHandler } from "../src/leadgen/replies-poll.handler";
 
 // Fakes only: no network, no database. The fake Db records EVERY call so a test can prove that a
-// failed attempt touched nothing.
+// failed attempt touched nothing it shouldn't (see the "nothing touched" comment below for the
+// one deliberate exception, added with the incremental-fetch cursor).
 
 type Script = {
 	connectError?: Error;
@@ -26,27 +28,34 @@ const netErr = () =>
 const authErr = () =>
 	Object.assign(new Error("Command failed"), { authenticationFailed: true });
 
-function rfc822(id: string): Buffer {
-	return Buffer.from(
-		[
-			"From: Fiona <fiona@bartique.example>",
-			"To: danio@elitesystemsdesign.com",
-			`Subject: Re: your website ${id}`,
-			`Message-ID: <${id}@bartique.example>`,
-			"Date: Mon, 21 Sep 2026 10:00:00 +0000",
-			"Content-Type: text/plain; charset=utf-8",
-			"",
-			"Sounds good, call me.",
-			"",
-		].join("\r\n"),
-	);
+/** Structure-pass + downloadable-text-part shape for a single-part text/plain fixture message. */
+function fixtureMessage(id: string, n: number) {
+	const bodyText = "Sounds good, call me.";
+	return {
+		uid: 100 + n,
+		envelope: {
+			messageId: `<${id}@bartique.example>`,
+			from: [{ address: "fiona@bartique.example" }],
+			subject: `Re: your website ${id}`,
+			date: new Date("2026-09-21T10:00:00Z"),
+		},
+		bodyStructure: { type: "text/plain" },
+		headers: Buffer.from(""),
+		size: bodyText.length,
+		bodyText,
+	};
 }
-const INBOX = ["m1", "m2", "m3"];
+const INBOX = ["m1", "m2", "m3"].map(fixtureMessage);
 
 class FakeClient {
 	closed = false;
 	loggedOut = false;
-	private mailbox = "";
+	private selected = "";
+	uidValidity = 111n;
+	get mailbox() {
+		if (!this.selected) return false as const;
+		return { uidValidity: this.uidValidity, uidNext: 100 + INBOX.length };
+	}
 	constructor(
 		private readonly script: Script,
 		readonly index: number,
@@ -57,20 +66,26 @@ class FakeClient {
 	}
 	async getMailboxLock(path: string) {
 		if (this.script.lockError && path === "INBOX") throw this.script.lockError;
-		this.mailbox = path;
+		this.selected = path;
 		return { release() {} };
 	}
 	async list() {
 		return [{ path: "Sent", specialUse: "\\Sent" }];
 	}
 	async *fetch() {
-		if (this.mailbox === "INBOX") {
+		if (this.selected === "INBOX") {
 			let n = 0;
-			for (const id of INBOX) {
+			for (const m of INBOX) {
 				if (this.script.dropError && n === (this.script.dropAfter ?? 0)) {
 					throw this.script.dropError;
 				}
-				yield { uid: 100 + n, source: rfc822(id) };
+				yield {
+					uid: m.uid,
+					envelope: m.envelope,
+					bodyStructure: m.bodyStructure,
+					headers: m.headers,
+					size: m.size,
+				};
 				n++;
 			}
 			return;
@@ -85,6 +100,14 @@ class FakeClient {
 				to: [{ address: "fiona@bartique.example" }],
 			},
 			headers: Buffer.from("References: <m1@bartique.example>\r\n"),
+		};
+	}
+	async download(uid: number) {
+		const m = INBOX.find((x) => x.uid === uid);
+		const body = m?.bodyText ?? "";
+		return {
+			meta: { expectedSize: body.length },
+			content: Readable.from([Buffer.from(body)]),
 		};
 	}
 	async logout() {
@@ -113,9 +136,16 @@ function fakeDb(prior: { classificationEvidence: string } | null = null): {
 		lgOutreachSend: { findMany: read("lgOutreachSend.findMany", []) },
 		lgLead: { findMany: read("lgLead.findMany", []) },
 		lgLeadContact: { findMany: read("lgLeadContact.findMany", []) },
+		// No prior run recorded -> chooseFetchMode() always picks "full", i.e. every test in this
+		// file exercises the same `{since}` window fetch this suite has always tested.
+		// Incremental-mode cursor logic gets its own coverage in leadgen-poll-incremental-fetch.spec.ts.
+		lgJobRun: { findFirst: read("lgJobRun.findFirst", null) },
 		lgInboundMessage: {
 			findUnique: read("lgInboundMessage.findUnique", prior),
 			findMany: read("lgInboundMessage.findMany", []),
+			aggregate: read("lgInboundMessage.aggregate", {
+				_max: { imapUid: null },
+			}),
 			upsert: async (args: unknown) => {
 				calls.writes.push("lgInboundMessage.upsert");
 				calls.upserts.push(args);
@@ -212,7 +242,14 @@ describe("replies.poll retry (fake mailbox, fake db)", () => {
 		}
 		expect((caught as Error).message).toBe("Command failed");
 		expect(h.clients.length).toBe(1);
-		expect(calls.reads).toEqual([]);
+		// The incremental-fetch cursor is read before IMAP connects at all (it's plain, read-only
+		// data used to decide the fetch range) - so a connect failure still reads it, but touches
+		// nothing message-level: no lgInboundMessage.findUnique, no write of any kind.
+		expect(calls.reads).toEqual([
+			"lgJobRun.findFirst",
+			"lgJobRun.findFirst",
+			"lgInboundMessage.aggregate",
+		]);
 		expect(calls.writes).toEqual([]);
 		expect(failureCounters(caught)).toEqual({ imapAttempts: 1 });
 	});
@@ -237,7 +274,13 @@ describe("replies.poll retry (fake mailbox, fake db)", () => {
 		expect((caught as Error).message).toBe("getaddrinfo ETIMEOUT");
 		expect(h.clients.length).toBe(3);
 		expect(h.clients.every((c) => c.closed)).toBe(true);
-		expect(calls.reads).toEqual([]);
+		// Same one-time cursor read as the auth-failure test above - it happens once in run(),
+		// before any connection attempt, not once per retry.
+		expect(calls.reads).toEqual([
+			"lgJobRun.findFirst",
+			"lgJobRun.findFirst",
+			"lgInboundMessage.aggregate",
+		]);
 		expect(calls.writes).toEqual([]);
 		expect(failureCounters(caught)).toEqual({ imapAttempts: 3 });
 	});

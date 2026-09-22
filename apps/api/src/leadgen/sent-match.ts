@@ -1,3 +1,4 @@
+import { headerValue } from "./mail-headers";
 import { norm } from "./reply-match";
 import { referencedMessageIds } from "./reply-rules";
 
@@ -112,9 +113,7 @@ export type RawSent = {
 export function referencesFromHeaders(
 	headers: string | Buffer | null | undefined,
 ): string {
-	if (!headers) return "";
-	const text = headers.toString("utf8").replace(/\r?\n[ \t]+/g, " ");
-	return /^references:[ \t]*(.*)$/im.exec(text)?.[1] ?? "";
+	return headerValue(headers, "references") ?? "";
 }
 
 export function toSentItem(raw: RawSent): SentItem {
