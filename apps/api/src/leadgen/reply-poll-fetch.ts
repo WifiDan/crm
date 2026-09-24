@@ -128,13 +128,20 @@ export type FetchMode = "incremental" | "full";
 export type LastPollState = {
 	/** IMAP UIDVALIDITY the last successful poll saw, as a decimal string (matches the JSON counters column). */
 	uidValidity: string | null;
-	/** Highest UID already stored, if any. */
+	/**
+	 * Highest UID the last successful run SAW (counters.lastSeenUid, which includes skipped-self and
+	 * no-Message-ID messages that are never stored), falling back to MAX(stored imapUid) for runs that
+	 * predate that counter. Deriving it from stored rows alone re-fetched a self-sent message at the
+	 * top of INBOX on every poll.
+	 */
 	lastUid: number | null;
+	/** bytesWouldFetchFull from the last successful FULL run: the only measured full-window cost. */
+	lastFullBytes?: number | null;
 	/** startedAt of the most recent successful FULL-mode run, if any. */
 	lastFullAt: Date | null;
 };
 
-/** No new state table (spec.md §1): the cursor is `MAX(imapUid)` plus the last-OK-run's counters. */
+/** No new state table (spec.md §1): the cursor lives in the last-OK-run's counters (UIDVALIDITY + lastSeenUid). */
 const RECONCILE_AFTER_MS = 20 * 60 * 60 * 1000;
 
 /**
@@ -160,4 +167,29 @@ export function incrementalRange(
 	uidNext: number,
 ): { hasNew: boolean; rangeUid: string } {
 	return { hasNew: lastUid + 1 < uidNext, rangeUid: `${lastUid + 1}:*` };
+}
+
+/** Cursor used when the last successful run stamped `lastSeenUid`: never behind what is stored. */
+export function resolveLastUid(
+	lastSeenUid: number | null | undefined,
+	maxStoredUid: number | null | undefined,
+): number | null {
+	const seen = typeof lastSeenUid === "number" ? lastSeenUid : null;
+	const stored = maxStoredUid ?? null;
+	if (seen === null) return stored;
+	return stored === null ? seen : Math.max(seen, stored);
+}
+
+/**
+ * The UID to persist as next run's cursor. Everything below uidNext at SELECT time was either
+ * fetched or is deliberately outside the window, so uidNext-1 is safe - unless the fetch was cut
+ * off at the message cap, in which case only what was actually read counts.
+ */
+export function nextCursorUid(
+	fetchedUids: number[],
+	uidNext: number,
+	truncated: boolean,
+): number {
+	const maxFetched = fetchedUids.length ? Math.max(...fetchedUids) : 0;
+	return truncated ? maxFetched : Math.max(maxFetched, uidNext - 1);
 }

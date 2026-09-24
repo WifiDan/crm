@@ -11,7 +11,9 @@ import {
 	chooseFetchMode,
 	incrementalRange,
 	mailFromStructure,
+	nextCursorUid,
 	pickTextPart,
+	resolveLastUid,
 } from "../src/leadgen/reply-poll-fetch";
 import {
 	classifyInbound,
@@ -306,8 +308,15 @@ function attachmentMessage(
 	};
 }
 
+function selfMessage(uid: number, id: string): FakeMessage {
+	const m = textMessage(uid, id);
+	m.envelope.from = [{ address: "danio@elitesystemsdesign.com" }];
+	return m;
+}
+
 class FakeClient {
 	closed = false;
+	fetchCalls: unknown[] = [];
 	loggedOut = false;
 	private selected = "";
 	constructor(
@@ -332,6 +341,7 @@ class FakeClient {
 	}
 	async *fetch(range: unknown) {
 		if (this.selected !== "INBOX") return;
+		this.fetchCalls.push(range);
 		let msgs = this.messages;
 		if (range && typeof range === "object" && "uid" in range) {
 			const from = Number(String((range as { uid: string }).uid).split(":")[0]);
@@ -364,8 +374,9 @@ class FakeClient {
 }
 
 function fakeDb(opts: {
-	lastOkCounters?: { imapUidValidity?: string } | null;
+	lastOkCounters?: { imapUidValidity?: string; lastSeenUid?: number } | null;
 	lastFullStartedAt?: Date | null;
+	lastFullCounters?: { bytesWouldFetchFull?: number } | null;
 	maxUid?: number | null;
 }): Db {
 	const db = {
@@ -378,7 +389,10 @@ function fakeDb(opts: {
 			findFirst: async (args: { where?: { counters?: unknown } }) => {
 				if (args?.where?.counters) {
 					return opts.lastFullStartedAt
-						? { startedAt: opts.lastFullStartedAt }
+						? {
+								startedAt: opts.lastFullStartedAt,
+								counters: opts.lastFullCounters ?? null,
+							}
 						: null;
 				}
 				return opts.lastOkCounters ? { counters: opts.lastOkCounters } : null;
@@ -503,5 +517,114 @@ describe("incremental fetch, end-to-end (fake mailbox, fake db)", () => {
 		const res = await h.run(ctx());
 		expect(res.counters.imapUidValidity).toBe("111");
 		expect(res.counters.fetchMode).toBe("full");
+	});
+});
+
+describe("cursor survives skipped-self messages (Card #506 follow-up)", () => {
+	test("resolveLastUid never falls behind either source", () => {
+		expect(resolveLastUid(undefined, 101)).toBe(101);
+		expect(resolveLastUid(105, 101)).toBe(105);
+		expect(resolveLastUid(100, 101)).toBe(101);
+		expect(resolveLastUid(null, null)).toBeNull();
+		expect(resolveLastUid(7, null)).toBe(7);
+	});
+
+	test("nextCursorUid: uidNext-1 normally, only what was read when truncated", () => {
+		expect(nextCursorUid([], 103, false)).toBe(102);
+		expect(nextCursorUid([101, 102], 103, false)).toBe(102);
+		expect(nextCursorUid([101, 102], 900, true)).toBe(102);
+	});
+
+	test("a self-sent message at the top advances the cursor; the next idle poll issues zero FETCH", async () => {
+		const messages = [textMessage(101, "a"), selfMessage(102, "mine")];
+		// Run 1: stored max is 101, cursor before = 101, so 102 (self) is fetched and skipped.
+		const db1 = fakeDb({
+			lastOkCounters: { imapUidValidity: "111" },
+			lastFullStartedAt: new Date(),
+			maxUid: 101,
+		});
+		const h1 = new TestHandler(db1, () => new FakeClient(messages, 111n));
+		const r1 = await h1.run(ctx());
+		expect(r1.counters.fetchMode).toBe("incremental");
+		expect(r1.counters.fetched).toBe(1);
+		expect(r1.counters.skippedSelf).toBe(1);
+		expect(r1.counters.lastSeenUid).toBe(102);
+
+		// Run 2: stored max is STILL 101 (self is never stored) but the persisted cursor is 102.
+		const db2 = fakeDb({
+			lastOkCounters: { imapUidValidity: "111", lastSeenUid: 102 },
+			lastFullStartedAt: new Date(),
+			maxUid: 101,
+		});
+		const h2 = new TestHandler(db2, () => new FakeClient(messages, 111n));
+		const r2 = await h2.run(ctx());
+		expect(r2.counters.fetchMode).toBe("incremental");
+		expect(r2.counters.fetched).toBe(0);
+		expect(r2.counters.skippedSelf).toBe(0);
+		expect(r2.counters.lastSeenUid).toBe(102);
+		// Zero FETCH of the INBOX at all (Sent-folder read is a separate mailbox).
+		expect(h2.client?.fetchCalls.length).toBe(0);
+	});
+
+	test("without the persisted cursor the old behaviour re-fetches the self message (control)", async () => {
+		const messages = [textMessage(101, "a"), selfMessage(102, "mine")];
+		const db = fakeDb({
+			lastOkCounters: { imapUidValidity: "111" },
+			lastFullStartedAt: new Date(),
+			maxUid: 101,
+		});
+		const h = new TestHandler(db, () => new FakeClient(messages, 111n));
+		const res = await h.run(ctx());
+		expect(res.counters.skippedSelf).toBe(1);
+		expect(h.client?.fetchCalls.length).toBe(1);
+	});
+
+	test("UIDVALIDITY change still forces a full fetch even with a high persisted cursor", async () => {
+		const messages = [textMessage(101, "a"), selfMessage(102, "mine")];
+		const db = fakeDb({
+			lastOkCounters: { imapUidValidity: "999", lastSeenUid: 102 },
+			lastFullStartedAt: new Date(),
+			maxUid: 101,
+		});
+		const h = new TestHandler(db, () => new FakeClient(messages, 111n));
+		const res = await h.run(ctx());
+		expect(res.counters.fetchMode).toBe("full");
+		expect(res.counters.fetched).toBe(2);
+	});
+
+	test("daily reconciliation still runs full even with a persisted cursor at the top", async () => {
+		const messages = [textMessage(101, "a"), selfMessage(102, "mine")];
+		const db = fakeDb({
+			lastOkCounters: { imapUidValidity: "111", lastSeenUid: 102 },
+			lastFullStartedAt: new Date(Date.now() - 21 * 60 * 60 * 1000),
+			maxUid: 101,
+		});
+		const h = new TestHandler(db, () => new FakeClient(messages, 111n));
+		const res = await h.run(ctx());
+		expect(res.counters.fetchMode).toBe("full");
+		expect(res.counters.fetched).toBe(2);
+		expect(res.counters.lastSeenUid).toBe(102);
+	});
+
+	test("bytesWouldFetchFull in incremental mode is the last full run's figure, labelled", async () => {
+		const messages = [textMessage(101, "a")];
+		const db = fakeDb({
+			lastOkCounters: { imapUidValidity: "111", lastSeenUid: 101 },
+			lastFullStartedAt: new Date(),
+			lastFullCounters: { bytesWouldFetchFull: 123_456 },
+			maxUid: 101,
+		});
+		const h = new TestHandler(db, () => new FakeClient(messages, 111n));
+		const res = await h.run(ctx());
+		expect(res.counters.fetchMode).toBe("incremental");
+		expect(res.counters.bytesWouldFetchFull).toBe(123_456);
+		expect(res.counters.bytesWouldFetchFullBasis).toBe("lastFull");
+	});
+
+	test("full mode reports its own measured figure", async () => {
+		const messages = [textMessage(101, "a")];
+		const h = new TestHandler(fakeDb({}), () => new FakeClient(messages, 111n));
+		const res = await h.run(ctx());
+		expect(res.counters.bytesWouldFetchFullBasis).toBe("measured");
 	});
 });

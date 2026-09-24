@@ -22,8 +22,10 @@ import {
 	incrementalRange,
 	type LastPollState,
 	mailFromStructure,
+	nextCursorUid,
 	type ParsedMail,
 	pickTextPart,
+	resolveLastUid,
 	type StructureEntry,
 } from "./reply-poll-fetch";
 import {
@@ -82,8 +84,12 @@ type Counters = {
 	imapUidValidity: string;
 	/** Actual bytes pulled off the wire for message bodies this run (the acceptance-criteria number). */
 	bytesDownloaded: number;
-	/** Informational: what a full-window fetch of this run's candidate messages would have cost. */
+	/** Informational: what a full-window fetch would have cost (measured in full mode, carried from the last full run in incremental mode). */
 	bytesWouldFetchFull: number;
+	/** "measured" = this run's own candidate sizes; "lastFull" = carried from the last full run. */
+	bytesWouldFetchFullBasis: "measured" | "lastFull";
+	/** Highest INBOX UID this run saw (stored or not). The next incremental run starts after it. */
+	lastSeenUid: number;
 };
 
 type PythonView = { processed: Set<string>; repliedMids: Set<string> };
@@ -191,6 +197,8 @@ export class RepliesPollHandler implements LgJobHandler {
 			imapUidValidity: mailbox.uidValidity,
 			bytesDownloaded: mailbox.bytesDownloaded,
 			bytesWouldFetchFull: mailbox.bytesWouldFetchFull,
+			bytesWouldFetchFullBasis: mailbox.bytesWouldFetchFullBasis,
+			lastSeenUid: mailbox.lastSeenUid,
 		};
 		const seen = new Set<string>();
 		const crmReplies = new Set<string>();
@@ -241,14 +249,21 @@ export class RepliesPollHandler implements LgJobHandler {
 					counters: { path: ["fetchMode"], equals: "full" },
 				},
 				orderBy: { startedAt: "desc" },
-				select: { startedAt: true },
+				select: { startedAt: true, counters: true },
 			}),
 			this.db.lgInboundMessage.aggregate({ _max: { imapUid: true } }),
 		]);
-		const counters = lastOk?.counters as { imapUidValidity?: string } | null;
+		const counters = lastOk?.counters as {
+			imapUidValidity?: string;
+			lastSeenUid?: number;
+		} | null;
+		const fullCounters = lastFull?.counters as {
+			bytesWouldFetchFull?: number;
+		} | null;
 		return {
 			uidValidity: counters?.imapUidValidity ?? null,
-			lastUid: maxUid._max.imapUid ?? null,
+			lastUid: resolveLastUid(counters?.lastSeenUid, maxUid._max.imapUid),
+			lastFullBytes: fullCounters?.bytesWouldFetchFull ?? null,
 			lastFullAt: lastFull?.startedAt ?? null,
 		};
 	}
@@ -461,6 +476,8 @@ export class RepliesPollHandler implements LgJobHandler {
 		uidValidity: string;
 		bytesDownloaded: number;
 		bytesWouldFetchFull: number;
+		bytesWouldFetchFullBasis: "measured" | "lastFull";
+		lastSeenUid: number;
 	}> {
 		const client = this.createClient(opts);
 		let phase = "connect";
@@ -497,6 +514,8 @@ export class RepliesPollHandler implements LgJobHandler {
 		uidValidity: string;
 		bytesDownloaded: number;
 		bytesWouldFetchFull: number;
+		bytesWouldFetchFullBasis: "measured" | "lastFull";
+		lastSeenUid: number;
 	}> {
 		const {
 			value: {
@@ -506,6 +525,8 @@ export class RepliesPollHandler implements LgJobHandler {
 				uidValidity,
 				bytesDownloaded,
 				bytesWouldFetchFull,
+				bytesWouldFetchFullBasis,
+				lastSeenUid,
 			},
 			attempts,
 		} = await withImapRetry(
@@ -527,6 +548,8 @@ export class RepliesPollHandler implements LgJobHandler {
 				uidValidity,
 				bytesDownloaded,
 				bytesWouldFetchFull,
+				bytesWouldFetchFullBasis,
+				lastSeenUid,
 			};
 		} finally {
 			// Cleanup is best-effort: the server may already have dropped us after a complete fetch.
@@ -552,6 +575,8 @@ export class RepliesPollHandler implements LgJobHandler {
 		uidValidity: string;
 		bytesDownloaded: number;
 		bytesWouldFetchFull: number;
+		bytesWouldFetchFullBasis: "measured" | "lastFull";
+		lastSeenUid: number;
 	}> {
 		const lock = await client.getMailboxLock("INBOX");
 		try {
@@ -580,9 +605,18 @@ export class RepliesPollHandler implements LgJobHandler {
 					? await this.readInboxStructures(client, { uid: rangeUid }, opts.ctx)
 					: [];
 			}
-			const bytesWouldFetchFull = structures.reduce(
-				(sum, s) => sum + (s.size ?? 0),
-				0,
+			const measured = structures.reduce((sum, s) => sum + (s.size ?? 0), 0);
+			// Incremental runs only see the new mail, so the full-window cost is carried from the
+			// last full run (labelled as such) instead of costing a second window FETCH to measure.
+			const carried =
+				mode === "incremental" ? (opts.lastState.lastFullBytes ?? null) : null;
+			const bytesWouldFetchFull = carried ?? measured;
+			const bytesWouldFetchFullBasis =
+				carried === null ? "measured" : "lastFull";
+			const lastSeenUid = nextCursorUid(
+				structures.map((s) => s.uid),
+				mailbox.uidNext,
+				structures.length >= MAX_MESSAGES,
 			);
 			const downloaded = await this.downloadTextParts(
 				client,
@@ -596,6 +630,8 @@ export class RepliesPollHandler implements LgJobHandler {
 				uidValidity,
 				bytesDownloaded,
 				bytesWouldFetchFull,
+				bytesWouldFetchFullBasis,
+				lastSeenUid,
 			};
 		} finally {
 			try {
