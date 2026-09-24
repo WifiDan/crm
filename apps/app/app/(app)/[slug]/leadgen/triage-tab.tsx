@@ -4,7 +4,7 @@ import { Button } from "@crm/ui/components/button";
 import { TablePagination } from "@crm/ui/components/table-pagination";
 import { cn } from "@crm/ui/lib/utils";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTRPC } from "@/lib/trpc/client";
 import type { RouterOutputs } from "@/lib/trpc/types";
 import { type Applied, LeadActions } from "./lead-actions";
@@ -36,13 +36,13 @@ const DECISIONS = [
 type Decision = (typeof DECISIONS)[number]["value"];
 
 const SORTS = [
-	{ value: "score", label: "Worst score first" },
+	{ value: "score", label: "Lowest score first" },
 	{ value: "businessName", label: "Name" },
 	{ value: "updatedAt", label: "Recently changed" },
 ] as const;
 
 export function TriageTab({
-	initialDecision = "all",
+	initialDecision = "undecided",
 }: {
 	initialDecision?: Decision;
 }) {
@@ -86,6 +86,14 @@ export function TriageTab({
 	const everything = decisionCounts.all ?? 0;
 	const selected = list.data?.rows.find((r) => r.id === selectedId) ?? null;
 
+	// On a wide screen open the first prospect, so the detail is never blank.
+	const firstId = list.data?.rows[0]?.id ?? null;
+	useEffect(() => {
+		if (selectedId || !firstId) return;
+		if (window.matchMedia?.("(min-width: 1024px)").matches)
+			setSelectedId(firstId);
+	}, [selectedId, firstId]);
+
 	return (
 		<div className="flex min-w-0 flex-col gap-3">
 			<MirrorFreshness writes />
@@ -98,9 +106,7 @@ export function TriageTab({
 						onClick={() => reset(setDecision)(d.value)}
 					>
 						{d.label}
-						{decisionCounts[d.value] !== undefined
-							? ` (${decisionCounts[d.value]})`
-							: ""}
+						{list.data ? ` (${decisionCounts[d.value] ?? 0})` : ""}
 					</Button>
 				))}
 			</div>
@@ -170,7 +176,8 @@ export function TriageTab({
 				</select>
 			</div>
 			<p className="text-xs text-muted-foreground">
-				{total} of {everything} prospects with no demo built yet.
+				{total} of {everything} prospects with a website and no demo yet.
+				Approving here queues a demo build; it never sends anything.
 			</p>
 			{list.isError ? (
 				<p className="text-xs text-destructive">{list.error.message}</p>
@@ -186,7 +193,11 @@ export function TriageTab({
 						<p className="text-xs text-muted-foreground">Loading…</p>
 					) : null}
 					{list.data && list.data.rows.length === 0 ? (
-						<EmptyState decision={decision} counts={decisionCounts} />
+						<EmptyState
+							decision={decision}
+							counts={decisionCounts}
+							onShowApproved={() => reset(setDecision)("Approved")}
+						/>
 					) : null}
 					<ul className="flex flex-col gap-2">
 						{(list.data?.rows ?? []).map((r) => (
@@ -238,17 +249,25 @@ export function TriageTab({
 function EmptyState({
 	decision,
 	counts,
+	onShowApproved,
 }: {
 	decision: Decision;
 	counts: Record<string, number>;
+	onShowApproved: () => void;
 }) {
 	const decided = (counts.Approved ?? 0) + (counts.Rejected ?? 0);
 	if (decision === "undecided" && decided > 0) {
 		return (
-			<p className="rounded-md border border-border p-3 text-xs">
-				Nothing left to triage. Every prospect here already has a decision (
-				{counts.Approved ?? 0} approved, {counts.Rejected ?? 0} rejected).
-			</p>
+			<div className="flex flex-col items-start gap-2 rounded-md border border-border p-3 text-xs">
+				<p>
+					Nothing left to triage. Every prospect here already has a decision (
+					{counts.Approved ?? 0} approved, {counts.Rejected ?? 0} rejected).
+					Approved prospects wait for the nightly build.
+				</p>
+				<Button size="sm" variant="outline" onClick={onShowApproved}>
+					See the {counts.Approved ?? 0} awaiting a build
+				</Button>
+			</div>
 		);
 	}
 	return (

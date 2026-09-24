@@ -31,7 +31,7 @@ describe("reply rate is distinct replied leads over initial sends", () => {
 			join(import.meta.dir, "../../app/app/(app)/[slug]/leadgen/ops-tab.tsx"),
 			"utf8",
 		);
-		expect(tab).toContain("percent(data.totals.replied, data.totals.sent)");
-		expect(tab).toContain("replied leads / sent leads");
+		expect(tab).toContain("percent(t.replied, t.sent)");
+		expect(tab).toContain("reply rate (leads, not messages)");
 	});
 });

@@ -11,7 +11,6 @@ import {
 	AlertDialogTitle,
 	AlertDialogTrigger,
 } from "@crm/ui/components/alert-dialog";
-import { Badge } from "@crm/ui/components/badge";
 import { Button } from "@crm/ui/components/button";
 import { Textarea } from "@crm/ui/components/textarea";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -26,21 +25,13 @@ import {
 	seenOf,
 	stateNote,
 } from "./lead-actions-state";
-import { DecisionBadge, SectionTitle } from "./lead-parts";
+import { ReviewStateBadge, SectionTitle, ToneBadge } from "./lead-parts";
 import { newRequestId } from "./request-id";
+import { reviewStateOf } from "./stage-labels";
 
 export type Applied = RouterOutputs["leadgenDecisions"]["decide"];
 type Stage = "triage" | "review";
 type Decision = "Approved" | "Rejected" | "Needs Changes";
-
-const DECISIONS: Array<{ value: Decision; label: string }> = [
-	{ value: "Approved", label: "Approve" },
-	{ value: "Rejected", label: "Reject" },
-	{ value: "Needs Changes", label: "Needs changes" },
-];
-
-const MIRROR_NOTE =
-	"Saved changes go straight to NocoDB. This page reads the mirror, which trails by up to 15 minutes, so a list can look out of date right after you save.";
 
 export function LeadActions({
 	lead,
@@ -141,82 +132,112 @@ export function LeadActions({
 		});
 	};
 
+	const reviewIsp = stage === "review" && current.table === "isp";
+	const disabledAll = busy || blockedReason !== null;
+	const needsChangesButton = (label: string) => (
+		<Button
+			size="sm"
+			variant="outline"
+			disabled={disabledAll}
+			onClick={() => send("Needs Changes")}
+		>
+			{label}
+		</Button>
+	);
+
 	return (
-		<div className="flex flex-col gap-2 rounded-md border border-border p-3">
-			<SectionTitle>Decision</SectionTitle>
-			<div className="flex flex-wrap items-center gap-1 text-xs">
-				<span className="text-muted-foreground">Now:</span>
-				<DecisionBadge decision={current.decision} />
-				{current.sendApproved ? (
-					<Badge variant="secondary">send approved</Badge>
-				) : null}
-				{current.reworkRequested ? (
-					<Badge variant="outline">rework requested</Badge>
-				) : null}
+		<div className="flex flex-col gap-2 rounded-md border border-border bg-background p-3">
+			<div className="flex flex-wrap items-center gap-2 text-xs">
+				<SectionTitle>Decision</SectionTitle>
+				<span className="text-muted-foreground">now</span>
+				{stage === "review" ? (
+					<ReviewStateBadge state={reviewStateOf(current)} />
+				) : (
+					<ToneBadge
+						tone={
+							current.decision === "Rejected"
+								? "bad"
+								: current.decision === "Approved"
+									? "good"
+									: "waiting"
+						}
+					>
+						{current.decision === "Approved"
+							? "approved to build"
+							: (current.decision?.toLowerCase() ?? "undecided")}
+					</ToneBadge>
+				)}
 			</div>
 			{blockedReason ? (
 				<p className="text-xs text-destructive">{blockedReason}</p>
 			) : null}
-			<div className="flex flex-wrap gap-2">
+			<div className="flex flex-wrap items-start gap-2">
 				{arming ? (
 					<ApproveForSending
 						name={current.businessName}
 						email={current.email ?? null}
-						disabled={busy || blockedReason !== null}
+						disabled={disabledAll}
 						onConfirm={() => send("Approved")}
 					/>
 				) : (
 					<Button
 						size="sm"
-						disabled={busy || blockedReason !== null}
+						disabled={disabledAll}
 						onClick={() => send("Approved")}
 					>
 						Approve
 					</Button>
 				)}
-				{DECISIONS.filter((d) => d.value !== "Approved").map((d) => (
-					<Button
-						key={d.value}
-						size="sm"
-						variant="outline"
-						disabled={busy || blockedReason !== null}
-						onClick={() => send(d.value)}
-					>
-						{d.label}
-					</Button>
-				))}
+				<Button
+					size="sm"
+					variant="outline"
+					disabled={disabledAll}
+					onClick={() => send("Rejected")}
+				>
+					Reject
+				</Button>
+				{reviewIsp ? null : needsChangesButton("Needs changes")}
 			</div>
+			{reviewIsp ? (
+				<details className="group rounded-md border border-border px-3 py-2 text-xs">
+					<summary className="cursor-pointer select-none font-medium">
+						Needs changes…
+					</summary>
+					<div className="mt-2 flex flex-col gap-2">
+						<Textarea
+							value={notes}
+							onChange={(e) => setNotes(e.target.value)}
+							placeholder="What must change in this demo"
+							rows={3}
+						/>
+						<div className="flex flex-wrap gap-2">
+							<Button
+								size="sm"
+								disabled={disabledAll || notes.trim() === ""}
+								onClick={sendRework}
+							>
+								Request rework
+							</Button>
+							{needsChangesButton("Mark needs changes (no rebuild)")}
+						</div>
+						<p className="text-[11px] text-muted-foreground">
+							Request rework sends your note to the nightly build, which
+							rebuilds the demo. Marking needs changes only records the
+							decision. Either one takes the lead out of the send queue.
+						</p>
+					</div>
+				</details>
+			) : null}
 			<p className="text-[11px] text-muted-foreground">
 				{stage === "triage"
 					? "Approving here means the prospect is worth building. It does not send anything."
 					: current.table === "gym"
 						? "Gym sends stay manual. Approving here only records the decision."
-						: "Reject and Needs changes take this lead out of the send queue."}
+						: "Approve for sending asks you to confirm first. Reject takes the lead out of the send queue."}
 			</p>
-			{stage === "review" && current.table === "isp" ? (
-				<div className="flex flex-col gap-2">
-					<SectionTitle>Send back for rework</SectionTitle>
-					<Textarea
-						value={notes}
-						onChange={(e) => setNotes(e.target.value)}
-						placeholder="What must change in this demo"
-						rows={3}
-					/>
-					<Button
-						size="sm"
-						variant="outline"
-						className="w-fit"
-						disabled={busy || blockedReason !== null || notes.trim() === ""}
-						onClick={sendRework}
-					>
-						Request rework
-					</Button>
-				</div>
-			) : null}
 			{stateNote(applied) ? (
 				<p className="text-xs">{stateNote(applied)}</p>
 			) : null}
-			<p className="text-[11px] text-muted-foreground">{MIRROR_NOTE}</p>
 		</div>
 	);
 }

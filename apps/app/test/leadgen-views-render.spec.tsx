@@ -67,6 +67,10 @@ const totals = {
 	readyToSend: 8,
 	callText: 333,
 	doNotContact: 83,
+	awaitingBuild: 285,
+	needsSendApproval: 22,
+	sendApprovedUnsent: 87,
+	newNoWebsite: 159,
 };
 
 const unit = {
@@ -119,6 +123,7 @@ const FIXTURES: Record<string, unknown> = {
 		jobs: [{ name: "nocodb.mirror", lastStatus: "OK" }],
 	},
 	alerts: [],
+	list: { items: [] },
 	campaigns: [{ id: "c1", name: "ISP facelift", status: "active" }],
 	markets: [
 		{
@@ -267,6 +272,7 @@ const { ReviewTab, DemoDetail } = await import(
 	"../app/(app)/[slug]/leadgen/review-tab"
 );
 const { OpsTab } = await import("../app/(app)/[slug]/leadgen/ops-tab");
+const { SystemTab } = await import("../app/(app)/[slug]/leadgen/system-tab");
 const { LocalDemoPane } = await import(
 	"../app/(app)/[slug]/leadgen/demo-local-pane"
 );
@@ -290,47 +296,54 @@ function html(element: React.ReactElement): string {
 describe("console", () => {
 	const out = html(<LeadgenConsole />);
 
-	test("opens on Ops and lists every tab, with the row allowed to scroll on a phone", () => {
-		for (const tab of [
-			"Ops",
-			"Triage",
-			"Review",
-			"Replies",
-			"Jobs",
-			"Leads",
-			"Markets",
-			"Alerts",
-		]) {
-			expect(out).toContain(`>${tab}</button>`);
+	test("opens on Today with five work tabs and a System button, the row allowed to scroll on a phone", () => {
+		const text = out.replace(/<[^>]+>/g, " ");
+		for (const tab of ["Today", "Triage", "Review", "Replies", "Leads"]) {
+			expect(text).toContain(` ${tab} `);
+		}
+		expect(text).toContain("System");
+		for (const gone of [">Ops<", ">Jobs<", ">Markets<", ">Alerts<"]) {
+			expect(out).not.toContain(gone);
 		}
 		expect(out).toContain("overflow-x-auto");
-		expect(out).toContain("Total leads");
+		expect(out).toContain("Needs triage");
+	});
+
+	test("the Review tab carries the same count as the Today tile", () => {
+		const at = out.indexOf(">Review");
+		expect(at).toBeGreaterThan(-1);
+		expect(out.slice(at, at + 200)).toContain(">22</span>");
 	});
 });
 
 describe("Triage", () => {
 	const out = html(<TriageTab initialDecision="undecided" />);
 
-	test("opens on the All filter", () => {
-		const all = html(<TriageTab />);
-		const active = (label: string) =>
-			new RegExp(`data-variant="default"[^<]*>${label}`).test(all);
-		expect(active("All \\(491\\)")).toBe(true);
-		expect(active("Undecided")).toBe(false);
-		const undecided = html(<TriageTab initialDecision="undecided" />);
-		expect(/data-variant="default"[^<]*>Undecided/.test(undecided)).toBe(true);
+	test("opens on Undecided and shows its count even when it is zero", () => {
+		const first = html(<TriageTab />);
+		expect(/data-variant="default"[^<]*>Undecided/.test(first)).toBe(true);
+		expect(first.replace(/<!-- -->/g, "")).toContain("Undecided (0)");
+		const all = html(<TriageTab initialDecision="all" />);
+		expect(/data-variant="default"[^<]*>All/.test(all)).toBe(true);
+	});
+
+	test("an empty Undecided view points at the leads waiting for a build", () => {
+		expect(out.replace(/<!-- -->/g, "")).toContain(
+			"See the 288 awaiting a build",
+		);
 	});
 
 	test("says there is nothing left to triage instead of showing a blank list", () => {
 		expect(out).toContain("Nothing left to triage");
 		expect(out).toContain("288 approved, 203 rejected");
-		expect(out).toContain("0 of 491 prospects");
+		expect(out.replace(/<!-- -->/g, "")).toContain("0 of 491 prospects");
 	});
 
 	test("shows the mirror age and the decision counts", () => {
-		expect(out).toContain("Data from the NocoDB mirror");
-		expect(out).toContain("Approved (288)");
-		expect(out).toContain("All (491)");
+		const text = out.replace(/<!-- -->/g, "");
+		expect(text).toMatch(/Synced \d+ min ago/);
+		expect(text).toContain("Approved (288)");
+		expect(text).toContain("All (491)");
 	});
 
 	test("stacks the list above the detail on a phone and pairs them on a wide screen", () => {
@@ -348,9 +361,17 @@ describe("Review", () => {
 	});
 
 	test("shows view counts that include the placeholder hold and the total", () => {
-		expect(out).toContain("Pending (22)");
-		expect(out).toContain("Placeholder (12)");
-		expect(out).toContain("251 built demos");
+		const text = out.replace(/<!-- -->/g, "");
+		expect(text).toContain("Needs send approval (22)");
+		expect(text).toContain("Send-approved (214)");
+		expect(text).toContain("Placeholder (12)");
+		expect(text).toContain("All real demos (239)");
+		expect(text).toContain("251 built demos: 239 real, 12 placeholders");
+	});
+
+	test("a card says where the demo stands for sending, not the triage decision", () => {
+		expect(out).toContain("needs send approval");
+		expect(out).not.toContain(">no QA<");
 	});
 
 	test("hides the list behind the detail only when a demo is open", () => {
@@ -409,32 +430,60 @@ describe("Review detail, side by side and narrow", () => {
 	test("offers the decision panel, and no verify control", () => {
 		expect(out).toContain(">Approve for sending<");
 		expect(out).toContain(">Reject<");
-		expect(out).toContain(">Needs changes<");
+		expect(out).toContain("Needs changes…");
 		expect(out).not.toContain(">Verify<");
 	});
 
-	test("shows the QA failure and marks the draft as not sent", () => {
+	test("puts the decision above the side-by-side so it is reachable without scrolling", () => {
+		expect(out.indexOf(">Approve for sending<")).toBeLessThan(
+			out.indexOf("Their current site"),
+		);
+		expect(out).toContain("xl:sticky");
+	});
+
+	test("shows the QA failure and the draft email inline, marked as not sent", () => {
 		expect(out).toContain("broken link: tel:");
-		expect(out).toContain("Not sent, draft only");
+		expect(out).toContain("Draft, not sent");
+		expect(out).toContain("Your new site");
+		expect(out).toContain("Hello Pat");
 	});
 });
 
 describe("Ops", () => {
 	const out = html(<OpsTab onNavigate={() => undefined} />);
 
-	test("shows the tiles with the same numbers the old dashboard shows", () => {
+	test("splits the tiles into what waits on Danio and the pipeline, with the same numbers", () => {
+		const text = out.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+		expect(text.indexOf("Waiting on you")).toBeLessThan(
+			text.indexOf("Pipeline"),
+		);
 		for (const [label, value] of [
-			["Total leads", "992"],
-			["Demos built", "258"],
-			["Ready to send", "8"],
-			["Sent", "115"],
+			["Needs triage", "0"],
+			["Needs send approval", "22"],
+			["Awaiting build", "285"],
+			["Send-approved, not sent", "87"],
+			["Ever sent", "115"],
 			["Call / text list", "333"],
+			["Demos built", "258"],
 		]) {
-			expect(out.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toContain(
-				`${value} ${label}`,
-			);
+			expect(text).toContain(`${value} ${label}`);
 		}
+		expect(text).toContain("8 have an email and draft for the 08:30 send");
 	});
+
+	test("shows standing items and leaves services to System", () => {
+		expect(out).toContain("Pricing story");
+		expect(out).not.toContain("leadgen-daily-send.timer");
+		expect(out).toContain("Undecided");
+	});
+
+	test("the wide tables scroll sideways instead of breaking the page", () => {
+		expect(out).toContain("overflow-x-auto");
+	});
+});
+
+describe("System", () => {
+	const out = html(<SystemTab />);
 
 	test("puts a failing unit first and flags it", () => {
 		expect(out.indexOf("leadgen-review-server.service")).toBeLessThan(
@@ -443,14 +492,14 @@ describe("Ops", () => {
 		expect(out).toContain("failed/failed");
 	});
 
-	test("shows standing items, health checks, and the CRM sync files", () => {
-		expect(out).toContain("Pricing story");
-		expect(out).toContain("daily send ran");
-		expect(out).toContain("1 pending");
+	test("says what needs a look in one line", () => {
+		expect(out).toContain("Needs a look");
+		expect(out).toContain("1 service problem");
 	});
 
-	test("the wide tables scroll sideways instead of breaking the page", () => {
-		expect(out).toContain("overflow-x-auto");
+	test("shows health checks and the CRM sync files", () => {
+		expect(out).toContain("daily send ran");
+		expect(out).toContain("1 pending");
 	});
 });
 
@@ -488,14 +537,17 @@ const actions = (
 };
 
 describe("decision actions", () => {
-	test("review stage on ISP: Approve sits behind a confirm dialog, with rework and the mirror note", () => {
+	test("review stage on ISP: Approve sits behind a confirm dialog; needs changes and rework share one fold", () => {
 		const out = actions({}, "review");
 		expect(out).toContain(">Approve for sending</button>");
 		expect(out).not.toContain(">Approve</button>");
 		expect(out).toContain(">Reject</button>");
-		expect(out).toContain(">Needs changes</button>");
+		expect(out).toContain("Needs changes…");
 		expect(out).toContain(">Request rework</button>");
-		expect(out).toContain("trails by up to 15 minutes");
+		expect(out).toContain(">Mark needs changes (no rebuild)</button>");
+		expect(out.indexOf("<details")).toBeLessThan(
+			out.indexOf(">Request rework</button>"),
+		);
 	});
 
 	test("the review Approve control is only reachable through the confirm dialog", () => {
@@ -531,7 +583,7 @@ describe("decision actions", () => {
 		expect(out).toContain("do not contact");
 		const buttons =
 			out.match(
-				/<button[^<]*>(Approve for sending|Reject|Needs changes|Request rework)</g,
+				/<button[^<]*>(Approve for sending|Reject|Mark needs changes \(no rebuild\)|Request rework)</g,
 			) ?? [];
 		expect(buttons.length).toBeGreaterThan(0);
 		for (const b of buttons) expect(b).toContain("disabled");

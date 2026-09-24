@@ -31,6 +31,9 @@ const IS_GYM = Prisma.sql`l."nocodbTable" = ${tableId("gym")}`;
 
 const DECISION = Prisma.sql`COALESCE(l."approvalDecision", '')`;
 
+/** A lead that already went out is not waiting for a send approval. */
+const NOT_SENT = Prisma.sql`l."sentAt" IS NULL AND ${DECISION} <> 'Sent'`;
+
 const allOf = (conditions: Prisma.Sql[]) =>
 	Prisma.join(
 		conditions.map((c) => Prisma.sql`(${c})`),
@@ -76,7 +79,7 @@ export function triageWhere(
 export function viewCondition(view: ReviewView): Prisma.Sql {
 	switch (view) {
 		case "pending":
-			return Prisma.sql`NOT (${PLACEHOLDER}) AND ((${IS_GYM} AND ${DECISION} NOT IN ('Approved', 'Rejected')) OR (NOT (${IS_GYM}) AND NOT l."sendApproved" AND ${DECISION} <> 'Rejected'))`;
+			return Prisma.sql`NOT (${PLACEHOLDER}) AND ${NOT_SENT} AND ((${IS_GYM} AND ${DECISION} NOT IN ('Approved', 'Rejected')) OR (NOT (${IS_GYM}) AND NOT l."sendApproved" AND ${DECISION} <> 'Rejected'))`;
 		case "approved":
 			return Prisma.sql`NOT (${PLACEHOLDER}) AND ((${IS_GYM} AND ${DECISION} = 'Approved') OR (NOT (${IS_GYM}) AND l."sendApproved"))`;
 		case "rejected":

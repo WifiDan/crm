@@ -15,6 +15,10 @@ const counts = z.object({
 	readyToSend: z.number(),
 	callText: z.number(),
 	doNotContact: z.number(),
+	awaitingBuild: z.number(),
+	needsSendApproval: z.number(),
+	sendApprovedUnsent: z.number(),
+	newNoWebsite: z.number(),
 });
 
 const dayCount = z.object({ date: z.string(), count: z.number() });

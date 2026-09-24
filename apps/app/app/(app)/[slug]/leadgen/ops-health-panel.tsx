@@ -10,7 +10,7 @@ import { when } from "./leadgen-format";
 type Health = RouterOutputs["leadgen"]["opsHealth"];
 type Unit = Health["systemd"]["units"][number];
 
-function hasProblem(unit: Unit): boolean {
+export function hasProblem(unit: Unit): boolean {
 	if (unit.activeState === "failed") return true;
 	return (
 		unit.result !== "success" && unit.result !== "unknown" && unit.result !== ""

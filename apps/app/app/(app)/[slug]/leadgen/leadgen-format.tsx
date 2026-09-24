@@ -54,22 +54,25 @@ export function MirrorFreshness({ writes = false }: { writes?: boolean }) {
 	const age = minutesSince(lastRunAt);
 	const stale = age === null || age > MIRROR_STALE_MINUTES;
 	const mismatched = mirror.data?.tables.some((t) => t.inSync === false);
+	const explain = writes
+		? "Lists read a copy of NocoDB that refreshes every 15 minutes. What you save here goes to NocoDB at once; the list catches up on the next refresh."
+		: "Numbers come from a copy of NocoDB that refreshes every 15 minutes. Read-only.";
 	return (
-		<div className="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2 text-xs">
-			<span className="font-medium">Data from the NocoDB mirror</span>
-			<span className="text-muted-foreground">
-				last run {when(lastRunAt)}
-				{age === null ? "" : ` (${age} min ago)`}
+		<div
+			className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground"
+			title={`${explain} Last refresh: ${when(lastRunAt)}.`}
+		>
+			<span
+				aria-hidden
+				className={`inline-block size-1.5 rounded-full ${stale || mismatched ? "bg-red-500" : "bg-emerald-500"}`}
+			/>
+			<span>
+				{age === null ? "Not synced yet" : `Synced ${age} min ago`} from NocoDB
 			</span>
 			{stale ? <Badge variant="destructive">stale</Badge> : null}
 			{mismatched ? (
 				<Badge variant="destructive">row count mismatch</Badge>
 			) : null}
-			<span className="text-muted-foreground">
-				{writes
-					? "Lists read the mirror. A change you save here goes to NocoDB at once and shows in the lists after the next mirror run, up to 15 minutes."
-					: "Changes made in NocoDB show here after the next mirror run, up to 15 minutes. Read-only."}
-			</span>
 		</div>
 	);
 }

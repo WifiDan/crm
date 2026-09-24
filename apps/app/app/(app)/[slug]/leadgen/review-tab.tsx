@@ -5,7 +5,7 @@ import { Button } from "@crm/ui/components/button";
 import { TablePagination } from "@crm/ui/components/table-pagination";
 import { cn } from "@crm/ui/lib/utils";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTRPC } from "@/lib/trpc/client";
 import type { RouterOutputs } from "@/lib/trpc/types";
 import { LocalDemoPane } from "./demo-local-pane";
@@ -13,16 +13,18 @@ import { type Applied, LeadActions } from "./lead-actions";
 import { effectiveLead, nextIdAfter } from "./lead-actions-state";
 import {
 	CONTROL_CLASS,
-	DecisionBadge,
 	LeadFacts,
 	NotesBlock,
 	PoolBadge,
 	QaBadge,
+	ReviewStateBadge,
 	SectionTitle,
+	ToneBadge,
 } from "./lead-parts";
 import { MirrorFreshness, useDebounced } from "./leadgen-format";
 import { SiteAuditPanel } from "./site-audit-panel";
 import { SiteShot } from "./site-shot-panel";
+import { reviewStateOf } from "./stage-labels";
 
 type Row = RouterOutputs["leadgen"]["reviewList"]["rows"][number];
 type Detail = NonNullable<RouterOutputs["leadgen"]["leadDetail"]>;
@@ -30,11 +32,11 @@ type Detail = NonNullable<RouterOutputs["leadgen"]["leadDetail"]>;
 const PAGE_SIZE = 25;
 
 const VIEWS = [
-	{ value: "pending", label: "Pending" },
-	{ value: "approved", label: "Approved" },
+	{ value: "pending", label: "Needs send approval" },
+	{ value: "approved", label: "Send-approved" },
 	{ value: "rejected", label: "Rejected" },
 	{ value: "placeholder", label: "Placeholder" },
-	{ value: "all", label: "All" },
+	{ value: "all", label: "All real demos" },
 ] as const;
 
 type View = (typeof VIEWS)[number]["value"];
@@ -90,6 +92,37 @@ export function ReviewTab() {
 		if (next) setSelectedId(next.id);
 	};
 
+	// On a wide screen open the first demo, so the detail pane is never blank.
+	const firstId = rows[0]?.id ?? null;
+	useEffect(() => {
+		if (selectedId || !firstId) return;
+		if (window.matchMedia?.("(min-width: 1280px)").matches)
+			setSelectedId(firstId);
+	}, [selectedId, firstId]);
+
+	// j / k move through the list. Nothing is decided from the keyboard.
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			const el = e.target as HTMLElement | null;
+			if (
+				e.metaKey ||
+				e.ctrlKey ||
+				e.altKey ||
+				el?.closest("input, textarea, select, [contenteditable=true]")
+			)
+				return;
+			const at = rows.findIndex((r) => r.id === selectedId);
+			const target =
+				e.key === "j" ? rows[at + 1] : e.key === "k" ? rows[at - 1] : null;
+			if (target) {
+				e.preventDefault();
+				setSelectedId(target.id);
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [rows, selectedId]);
+
 	return (
 		<div className="flex min-w-0 flex-col gap-3">
 			<MirrorFreshness writes />
@@ -128,9 +161,10 @@ export function ReviewTab() {
 				</select>
 			</div>
 			<p className="text-xs text-muted-foreground">
-				{viewCounts.everything ?? 0} built demos with a viewable Pages address,
-				of which {viewCounts.placeholder ?? 0} are held as placeholders. Pending
-				means no send approval yet.
+				{viewCounts.everything ?? 0} built demos:{" "}
+				{(viewCounts.everything ?? 0) - (viewCounts.placeholder ?? 0)} real,{" "}
+				{viewCounts.placeholder ?? 0} placeholders. Keys: j / k next and
+				previous.
 			</p>
 			{list.isError ? (
 				<p className="text-xs text-destructive">{list.error.message}</p>
@@ -147,7 +181,9 @@ export function ReviewTab() {
 					) : null}
 					{list.data && rows.length === 0 ? (
 						<p className="rounded-md border border-border p-3 text-xs text-muted-foreground">
-							No demos in this view.
+							{view === "pending"
+								? "All caught up. Nothing is waiting for a send approval."
+								: "No demos in this view."}
 						</p>
 					) : null}
 					<ul className="flex flex-col gap-2">
@@ -227,17 +263,10 @@ function DemoCard({
 		>
 			<span className="text-sm font-medium">{row.businessName}</span>
 			<span className="flex flex-wrap items-center gap-1">
+				<ReviewStateBadge state={reviewStateOf(row)} />
 				<PoolBadge table={row.table} />
 				<QaBadge qa={row.qa} />
 				<BuildBadge build={row.build} />
-				{row.sendApproved ? (
-					<Badge variant="secondary">send approved</Badge>
-				) : null}
-				{row.decision && !row.sendApproved ? (
-					<DecisionBadge decision={row.decision} />
-				) : null}
-				{row.placeholder ? <Badge variant="outline">placeholder</Badge> : null}
-				{row.reworkRequested ? <Badge variant="outline">rework</Badge> : null}
 			</span>
 			{row.address ? (
 				<span className="truncate text-muted-foreground">{row.address}</span>
@@ -269,7 +298,6 @@ export function DemoDetail({
 }) {
 	const trpc = useTRPC();
 	const [pane, setPane] = useState<"new" | "old">("new");
-	const [showDraft, setShowDraft] = useState(false);
 	const detail = useQuery(trpc.leadgen.leadDetail.queryOptions({ id }));
 	const lead = detail.data ? effectiveLead(detail.data, applied) : null;
 	const demoUrl = lead?.demoUrl ?? row?.demoUrl ?? null;
@@ -277,36 +305,48 @@ export function DemoDetail({
 
 	return (
 		<div className="flex min-w-0 flex-col gap-3 rounded-md border border-border p-3">
-			<div className="flex flex-wrap items-center gap-2">
-				<Button
-					size="sm"
-					variant="ghost"
-					className="xl:hidden"
-					onClick={onBack}
-				>
-					Back to list
-				</Button>
-				<span className="text-sm font-medium">{name}</span>
-				{row ? <QaBadge qa={row.qa} /> : null}
-				{row ? <BuildBadge build={row.build} /> : null}
-				<span className="ml-auto flex gap-1">
+			<div className="flex flex-col gap-2 bg-background xl:sticky xl:top-0 xl:z-10 xl:-mx-3 xl:-mt-3 xl:rounded-t-md xl:border-b xl:border-border xl:p-3">
+				<div className="flex flex-wrap items-center gap-2">
 					<Button
 						size="sm"
-						variant="outline"
-						disabled={!hasPrev}
-						onClick={onPrev}
+						variant="ghost"
+						className="xl:hidden"
+						onClick={onBack}
 					>
-						Previous
+						Back to list
 					</Button>
-					<Button
-						size="sm"
-						variant="outline"
-						disabled={!hasNext}
-						onClick={onNext}
-					>
-						Next
-					</Button>
-				</span>
+					<span className="text-sm font-medium">{name}</span>
+					{row ? <QaBadge qa={row.qa} /> : null}
+					{row ? <BuildBadge build={row.build} /> : null}
+					<span className="ml-auto flex gap-1">
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={!hasPrev}
+							onClick={onPrev}
+							title="Previous (k)"
+						>
+							Previous
+						</Button>
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={!hasNext}
+							onClick={onNext}
+							title="Next (j)"
+						>
+							Next
+						</Button>
+					</span>
+				</div>
+				{lead ? (
+					<LeadActions
+						lead={lead}
+						stage="review"
+						applied={applied}
+						onApplied={onApplied}
+					/>
+				) : null}
 			</div>
 			<div className="flex gap-1 lg:hidden">
 				{(["new", "old"] as const).map((p) => (
@@ -346,71 +386,69 @@ export function DemoDetail({
 					</ul>
 				</div>
 			) : null}
-			{lead ? (
-				<DetailBody
-					lead={lead}
-					showDraft={showDraft}
-					onToggleDraft={() => setShowDraft((v) => !v)}
-				/>
-			) : null}
+			{lead ? <DetailBody lead={lead} /> : null}
 			{detail.isPending ? (
 				<p className="text-xs text-muted-foreground">Loading details…</p>
-			) : null}
-			{lead ? (
-				<LeadActions
-					lead={lead}
-					stage="review"
-					applied={applied}
-					onApplied={onApplied}
-				/>
 			) : null}
 		</div>
 	);
 }
 
-function DetailBody({
-	lead,
-	showDraft,
-	onToggleDraft,
-}: {
-	lead: Detail;
-	showDraft: boolean;
-	onToggleDraft: () => void;
-}) {
+const PREVIEW_LINES = 6;
+
+function DraftEmail({ lead }: { lead: Detail }) {
+	const [full, setFull] = useState(false);
+	const body = lead.draftBody ?? "";
+	const lines = body.split("\n");
+	const long = lines.length > PREVIEW_LINES;
+	return (
+		<div className="flex flex-col gap-1 text-xs">
+			<div className="flex flex-wrap items-center gap-2">
+				<SectionTitle>Email they will get</SectionTitle>
+				<ToneBadge tone="neutral">Draft, not sent</ToneBadge>
+			</div>
+			<div className="rounded-md border border-border bg-muted/30 p-2">
+				<div className="font-medium">
+					{lead.draftSubject ?? "(no draft subject yet)"}
+				</div>
+				<div className="mt-1 whitespace-pre-wrap break-words">
+					{body === ""
+						? "(no draft written for this lead yet)"
+						: full || !long
+							? body
+							: `${lines.slice(0, PREVIEW_LINES).join("\n")}…`}
+				</div>
+				{long ? (
+					<Button
+						size="sm"
+						variant="ghost"
+						className="mt-1 h-7 px-2"
+						onClick={() => setFull((v) => !v)}
+					>
+						{full ? "Show less" : "Show full email"}
+					</Button>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+function DetailBody({ lead }: { lead: Detail }) {
 	return (
 		<>
+			<DraftEmail lead={lead} />
 			<SectionTitle>Lead</SectionTitle>
 			<LeadFacts lead={lead} />
-			<div className="flex flex-wrap gap-1 text-xs">
-				{lead.sendApproved ? (
-					<Badge variant="secondary">send approved</Badge>
-				) : null}
-				{lead.doNotContact ? (
-					<Badge variant="destructive">do not contact</Badge>
-				) : null}
-				{lead.hotLead ? <Badge variant="secondary">hot lead</Badge> : null}
-				{lead.placeholder ? <Badge variant="outline">placeholder</Badge> : null}
-			</div>
+			{lead.doNotContact || lead.hotLead ? (
+				<div className="flex flex-wrap gap-1 text-xs">
+					{lead.doNotContact ? (
+						<Badge variant="destructive">do not contact</Badge>
+					) : null}
+					{lead.hotLead ? <Badge variant="secondary">hot lead</Badge> : null}
+				</div>
+			) : null}
 			<SectionTitle>Notes</SectionTitle>
 			<NotesBlock notes={lead.notes} truncated={lead.notesTruncated} />
-			<div className="flex flex-col gap-2">
-				<div className="flex items-center gap-2">
-					<Button size="sm" variant="outline" onClick={onToggleDraft}>
-						{showDraft ? "Hide draft email" : "Show draft email"}
-					</Button>
-					<Badge variant="destructive">Not sent, draft only</Badge>
-				</div>
-				{showDraft ? (
-					<div className="flex flex-col gap-1 text-xs">
-						<div className="font-medium">
-							{lead.draftSubject ?? "(no draft subject yet)"}
-						</div>
-						<div className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-2">
-							{lead.draftBody ?? "(no draft written for this lead yet)"}
-						</div>
-					</div>
-				) : null}
-			</div>
 		</>
 	);
 }
@@ -501,7 +539,12 @@ function OldSitePane({
 					<SiteAuditPanel key={`audit-${leadId}`} leadId={leadId} />
 					<div className="flex flex-wrap gap-2">
 						<Button size="sm" variant="outline" asChild>
-							<a href={oldSite} target="_blank" rel="noreferrer noopener">
+							<a
+								href={oldSite}
+								target="_blank"
+								rel="noreferrer noopener"
+								title="Many sites refuse to be framed, so the screenshot is the dependable view. The CRM does not proxy their pages."
+							>
 								Open their site
 							</a>
 						</Button>
@@ -515,10 +558,6 @@ function OldSitePane({
 							</Button>
 						) : null}
 					</div>
-					<p className="text-muted-foreground">
-						Many sites refuse to be framed, so the picture above is the
-						dependable view. The CRM does not proxy their pages.
-					</p>
 				</div>
 			) : (
 				<p className="rounded-md border border-border p-3 text-xs text-muted-foreground">

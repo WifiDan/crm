@@ -103,6 +103,8 @@ export const leadsListInput = listInput.extend({
 	stage: z.enum(LEAD_STAGES).optional(),
 	table: z.enum(["isp", "gym"]).optional(),
 	doNotContact: z.boolean().optional(),
+	/** Leave DEAD rows out unless a stage is picked. */
+	hideDead: z.boolean().optional(),
 });
 
 export const leadRowOutput = z.object({

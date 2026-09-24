@@ -1,6 +1,6 @@
 import { Prisma } from "@crm/db";
 import { LEAD_VIEWS } from "./lead-views.config";
-import { PROSPECT } from "./lead-views.sql";
+import { PAGES_DEMO, PROSPECT, viewCondition } from "./lead-views.sql";
 
 type RawKey =
 	| "Rework Requested"
@@ -25,6 +25,18 @@ export const READY_TO_SEND = Prisma.sql`l."approvalDecision" = 'Approved'
 
 export const CALL_TEXT = Prisma.sql`l."approvalDecision" = 'Approved' AND ${field("Email")} = '' AND l."sentAt" IS NULL`;
 
+/** Triage said yes, no demo yet: waiting for the nightly build. */
+export const AWAITING_BUILD = Prisma.sql`l."approvalDecision" = 'Approved' AND l."demoUrl" IS NULL AND l."sentAt" IS NULL AND NOT l."doNotContact"`;
+
+/** Same rows the Review tab lists under "Needs send approval". */
+export const NEEDS_SEND_APPROVAL = Prisma.sql`${PAGES_DEMO} AND ${viewCondition("pending")}`;
+
+/** Send-approved and not sent yet, whether or not it has an email. */
+export const SEND_APPROVED_UNSENT = Prisma.sql`l."sendApproved" AND l."sentAt" IS NULL AND NOT l."doNotContact"`;
+
+/** Undecided leads with no website: they never show in Triage. */
+export const NEW_NO_WEBSITE = Prisma.sql`l."approvalDecision" IS NULL AND l."websiteUrl" IS NULL AND l."demoUrl" IS NULL AND NOT l."doNotContact"`;
+
 export const REWORK_QUEUE = Prisma.sql`${field("Rework Requested")} <> ''`;
 
 export const POOL_COUNTS = Prisma.sql`SELECT COALESCE(l."nocodbTable", '') AS k,
@@ -36,7 +48,11 @@ export const POOL_COUNTS = Prisma.sql`SELECT COALESCE(l."nocodbTable", '') AS k,
 	count(*) FILTER (WHERE ${AWAITING_REVIEW})::int AS "awaitingReview",
 	count(*) FILTER (WHERE ${READY_TO_SEND})::int AS "readyToSend",
 	count(*) FILTER (WHERE ${CALL_TEXT})::int AS "callText",
-	count(*) FILTER (WHERE l."doNotContact")::int AS "doNotContact"
+	count(*) FILTER (WHERE l."doNotContact")::int AS "doNotContact",
+	count(*) FILTER (WHERE ${AWAITING_BUILD})::int AS "awaitingBuild",
+	count(*) FILTER (WHERE ${NEEDS_SEND_APPROVAL})::int AS "needsSendApproval",
+	count(*) FILTER (WHERE ${SEND_APPROVED_UNSENT})::int AS "sendApprovedUnsent",
+	count(*) FILTER (WHERE ${NEW_NO_WEBSITE})::int AS "newNoWebsite"
 	FROM lg_lead l WHERE ${ACTIVE_LEAD} GROUP BY 1`;
 
 export const BY_SOURCE = Prisma.sql`SELECT COALESCE(NULLIF(BTRIM(l.raw->>'Source'), ''), 'Unknown') AS k, count(*)::int AS n FROM lg_lead l WHERE ${ACTIVE_LEAD} GROUP BY 1`;

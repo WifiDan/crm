@@ -1,37 +1,18 @@
 "use client";
 
-import { Badge } from "@crm/ui/components/badge";
-import { Button } from "@crm/ui/components/button";
 import { useQuery } from "@tanstack/react-query";
 import { useTRPC } from "@/lib/trpc/client";
 import type { RouterOutputs } from "@/lib/trpc/types";
 import { SectionTitle } from "./lead-parts";
 import { MirrorFreshness, poolLabel, when } from "./leadgen-format";
-import { OpsHealthPanel } from "./ops-health-panel";
 import { CallList, RecentSends, ReworkList, StandingList } from "./ops-lists";
 
 type Overview = RouterOutputs["leadgen"]["opsOverview"];
 type Counts = Overview["totals"];
 
-export type OpsTarget = "Review" | "Triage" | "Jobs" | "Alerts" | "Replies";
+export type OpsTarget = "Review" | "Triage" | "Replies" | "Leads" | "System";
 
 const CHART_DAYS = 30;
-
-const TILES: Array<{
-	key: keyof Counts;
-	label: string;
-	target?: OpsTarget;
-}> = [
-	{ key: "total", label: "Total leads" },
-	{ key: "pendingTriage", label: "Pending triage", target: "Triage" },
-	{ key: "sideBySideBuilt", label: "Demos built" },
-	{ key: "awaitingReview", label: "Awaiting review", target: "Review" },
-	{ key: "readyToSend", label: "Ready to send" },
-	{ key: "sent", label: "Sent" },
-	{ key: "replied", label: "Replied", target: "Replies" },
-	{ key: "callText", label: "Call / text list" },
-	{ key: "doNotContact", label: "Do not contact" },
-];
 
 function percent(part: number, whole: number): string {
 	return whole === 0 ? "n/a" : `${Math.round((part / whole) * 100)}%`;
@@ -47,6 +28,10 @@ export function OpsTab({
 		...trpc.leadgen.opsOverview.queryOptions(),
 		refetchInterval: 60_000,
 	});
+	const replies = useQuery({
+		...trpc.leadgenReplies.list.queryOptions({ view: "OPEN" }),
+		refetchInterval: 60_000,
+	});
 	if (overview.isPending) {
 		return <p className="text-xs text-muted-foreground">Loading…</p>;
 	}
@@ -54,28 +39,94 @@ export function OpsTab({
 		return <p className="text-xs text-destructive">{overview.error.message}</p>;
 	}
 	const data = overview.data;
+	const t = data.totals;
+	const repliesWaiting = replies.data
+		? replies.data.items.filter((i) => !i.inbound.answeredVia).length
+		: null;
 	return (
 		<div className="flex min-w-0 flex-col gap-4">
 			<MirrorFreshness />
-			<SystemStrip onNavigate={onNavigate} />
-			<div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-				{TILES.map((t) => (
+			<section className="flex flex-col gap-2">
+				<SectionTitle>Waiting on you</SectionTitle>
+				<div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
 					<Tile
-						key={t.key}
-						label={t.label}
-						value={data.totals[t.key]}
-						onOpen={
-							t.target ? () => onNavigate(t.target as OpsTarget) : undefined
-						}
+						label="Needs triage"
+						value={t.pendingTriage}
+						note="Prospects with a website and no decision"
+						urgent={t.pendingTriage > 0}
+						onOpen={() => onNavigate("Triage")}
 					/>
-				))}
-				<Tile
-					label="Reply rate"
-					value={percent(data.totals.replied, data.totals.sent)}
-					note="replied leads / sent leads"
-				/>
-			</div>
+					<Tile
+						label="Needs send approval"
+						value={t.needsSendApproval}
+						note="Built demos you have not approved for sending"
+						urgent={t.needsSendApproval > 0}
+						onOpen={() => onNavigate("Review")}
+					/>
+					<Tile
+						label="Replies to answer"
+						value={repliesWaiting ?? "…"}
+						note="Lead replies you have not answered yet"
+						urgent={(repliesWaiting ?? 0) > 0}
+						onOpen={() => onNavigate("Replies")}
+					/>
+				</div>
+			</section>
+			<section className="flex flex-col gap-2">
+				<SectionTitle>Pipeline</SectionTitle>
+				<div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+					<Tile
+						label="Awaiting build"
+						value={t.awaitingBuild}
+						note="Triage said yes; nightly build makes the demo"
+					/>
+					<Tile
+						label="Send-approved, not sent"
+						value={t.sendApprovedUnsent}
+						note={`${t.readyToSend} have an email and draft for the 08:30 send`}
+					/>
+					<Tile
+						label="Ever sent"
+						value={t.sent}
+						note="Leads that got at least one email"
+					/>
+					<Tile
+						label="Ever replied"
+						value={t.replied}
+						note={`${percent(t.replied, t.sent)} reply rate (leads, not messages)`}
+					/>
+					<Tile
+						label="Call / text list"
+						value={t.callText}
+						note="Approved but no email on file"
+					/>
+					<Tile
+						label="New, no website"
+						value={t.newNoWebsite}
+						note="Undecided, not shown in Triage"
+						onOpen={() => onNavigate("Leads")}
+					/>
+					<Tile
+						label="Demos built"
+						value={t.sideBySideBuilt}
+						note="All time, including placeholders"
+					/>
+					<Tile
+						label="Do not contact"
+						value={t.doNotContact}
+						note={`of ${t.total} leads in total`}
+					/>
+				</div>
+			</section>
 			<PoolTable pools={data.pools} />
+			<div className="grid gap-4 lg:grid-cols-2">
+				<Panel title="Rework queue">
+					<ReworkList rework={data.rework} />
+				</Panel>
+				<Panel title="Standing open items">
+					<StandingList standing={data.standing} />
+				</Panel>
+			</div>
 			<div className="grid gap-4 lg:grid-cols-2">
 				<Panel title={`Daily sends, last ${CHART_DAYS} days`}>
 					<Series series={data.dailySends} />
@@ -86,83 +137,31 @@ export function OpsTab({
 				<Panel title="By source">
 					<Bars counts={data.bySource} />
 				</Panel>
-				<Panel title="By decision">
-					<Bars counts={data.byDecision} />
-				</Panel>
-			</div>
-			<div className="grid gap-4 lg:grid-cols-2">
-				<Panel title="Rework queue">
-					<ReworkList rework={data.rework} />
-				</Panel>
-				<Panel title="Standing open items">
-					<StandingList standing={data.standing} />
+				<Panel title="By triage decision">
+					<Bars counts={decisionLabels(data.byDecision)} />
 				</Panel>
 			</div>
 			<Panel title="Call / text list">
 				<CallList />
 			</Panel>
-			<Panel title="Recent sends">
+			<Panel title="Recent sends (emails, including follow-ups)">
 				<RecentSends />
 			</Panel>
-			<OpsHealthPanel />
 			<p className="text-[11px] text-muted-foreground">
-				Counts as of {when(data.generatedAt)}. Same rules as the old ops
-				dashboard. Reply rate counts leads that replied, not reply messages.
+				Counts as of {when(data.generatedAt)}. Services, health checks and jobs
+				are under System.
 			</p>
 		</div>
 	);
 }
 
-function SystemStrip({ onNavigate }: { onNavigate: (tab: OpsTarget) => void }) {
-	const trpc = useTRPC();
-	const jobs = useQuery({
-		...trpc.leadgen.jobs.queryOptions(),
-		refetchInterval: 30_000,
-	});
-	const alerts = useQuery({
-		...trpc.leadgen.alerts.queryOptions(),
-		refetchInterval: 30_000,
-	});
-	const failing = (jobs.data?.jobs ?? []).filter(
-		(j) =>
-			j.lastStatus !== null &&
-			j.lastStatus !== "OK" &&
-			j.lastStatus !== "RUNNING",
-	);
-	const pages = (alerts.data ?? []).filter((a) => a.tier === "PAGE").length;
-	return (
-		<div className="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2 text-xs">
-			<span className="font-medium">CRM jobs</span>
-			{jobs.data ? (
-				<>
-					<Badge
-						variant={jobs.data.schedulerEnabled ? "secondary" : "destructive"}
-					>
-						scheduler {jobs.data.schedulerEnabled ? "on" : "off"}
-					</Badge>
-					<Badge variant={failing.length > 0 ? "destructive" : "secondary"}>
-						{failing.length} failing of {jobs.data.jobs.length}
-					</Badge>
-				</>
-			) : (
-				<span className="text-muted-foreground">loading</span>
-			)}
-			<Badge variant={pages > 0 ? "destructive" : "outline"}>
-				{alerts.data?.length ?? 0} open alerts
-			</Badge>
-			<span className="ml-auto flex gap-1">
-				<Button size="sm" variant="outline" onClick={() => onNavigate("Jobs")}>
-					Jobs
-				</Button>
-				<Button
-					size="sm"
-					variant="outline"
-					onClick={() => onNavigate("Alerts")}
-				>
-					Alerts
-				</Button>
-			</span>
-		</div>
+function decisionLabels(counts: Record<string, number>) {
+	const label: Record<string, string> = {
+		pending: "Undecided",
+		Sent: "Sent (gym, by hand)",
+	};
+	return Object.fromEntries(
+		Object.entries(counts).map(([k, n]) => [label[k] ?? k, n]),
 	);
 }
 
@@ -170,11 +169,13 @@ function Tile({
 	label,
 	value,
 	note,
+	urgent = false,
 	onOpen,
 }: {
 	label: string;
 	value: number | string;
 	note?: string;
+	urgent?: boolean;
 	onOpen?: () => void;
 }) {
 	const body = (
@@ -186,8 +187,9 @@ function Tile({
 			) : null}
 		</>
 	);
-	const shell =
-		"flex min-w-0 flex-col gap-0.5 rounded-md border border-border p-3 text-left";
+	const shell = `flex min-w-0 flex-col gap-0.5 rounded-md border p-3 text-left ${
+		urgent ? "border-amber-500/50 bg-amber-500/5" : "border-border"
+	}`;
 	return onOpen ? (
 		<button
 			type="button"
@@ -219,15 +221,16 @@ function Panel({
 function PoolTable({ pools }: { pools: Overview["pools"] }) {
 	const columns: Array<[string, keyof Counts]> = [
 		["Total", "total"],
-		["Pending triage", "pendingTriage"],
-		["Awaiting review", "awaitingReview"],
-		["Ready to send", "readyToSend"],
-		["Sent", "sent"],
-		["Replied", "replied"],
+		["Needs triage", "pendingTriage"],
+		["Awaiting build", "awaitingBuild"],
+		["Needs send approval", "needsSendApproval"],
+		["Send-approved", "sendApprovedUnsent"],
+		["Ever sent", "sent"],
+		["Ever replied", "replied"],
 		["Call / text", "callText"],
 	];
 	return (
-		<Panel title="Sent and eligible by pool">
+		<Panel title="By pool">
 			<div className="overflow-x-auto rounded-md border border-border">
 				<table className="w-full text-xs">
 					<thead className="bg-muted text-left">

@@ -248,6 +248,13 @@ describe("SQL builders bind every value", () => {
 		expect(new Set(texts).size).toBe(5);
 	});
 
+	test("needs-send-approval leaves out leads that already went out", () => {
+		const pending = viewCondition("pending");
+		expect(pending.text).toContain('"sentAt" IS NULL');
+		expect(pending.text).toContain("<> 'Sent'");
+		expect(viewCondition("approved").text).not.toContain('"sentAt"');
+	});
+
 	test("review where always requires a Pages demo URL", () => {
 		expect(reviewWhere(reviewBase).text).toContain("~*");
 		expect(

@@ -4,6 +4,7 @@ import type { z } from "zod";
 import { InjectDatabase } from "../database/database.constants";
 import { paginate, type SortDirection } from "../trpc/list-input";
 import { LgJobSchedulerService } from "./job-scheduler.service";
+import { NO_MARKET } from "./lead-views.contracts";
 import {
 	type alertListOutput,
 	countersOutput,
@@ -147,8 +148,9 @@ export class LeadgenService {
 		input: z.infer<typeof leadsListInput>,
 	): Promise<z.infer<typeof leadsListOutput>> {
 		const where: PrismaNamespace.LgLeadWhereInput = { mirrorMissingAt: null };
-		if (input.marketId) where.marketId = input.marketId;
-		if (input.stage) where.stage = input.stage;
+		if (input.marketId) {
+			where.marketId = input.marketId === NO_MARKET ? null : input.marketId;
+		}
 		if (input.table) {
 			where.nocodbTable = MIRROR_TABLES.find(
 				(t) => t.key === input.table,
@@ -164,6 +166,10 @@ export class LeadgenService {
 				{ address: { contains: input.q, mode: "insensitive" } },
 			];
 		}
+		// Stage counts ignore the stage filter so every option keeps its number.
+		const facetWhere = { ...where };
+		if (input.stage) where.stage = input.stage;
+		else if (input.hideDead) where.stage = { not: "DEAD" };
 		const [rows, total, stageGroups] = await Promise.all([
 			this.db.lgLead.findMany({
 				where,
@@ -174,7 +180,7 @@ export class LeadgenService {
 			this.db.lgLead.count({ where }),
 			this.db.lgLead.groupBy({
 				by: ["stage"],
-				where,
+				where: facetWhere,
 				_count: { _all: true },
 			}),
 		]);

@@ -20,6 +20,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { useTRPC } from "@/lib/trpc/client";
 import type { RouterOutputs } from "@/lib/trpc/types";
+import { groupByLead, splitQuoted } from "./reply-thread";
 
 type Item = RouterOutputs["leadgenReplies"]["list"]["items"][number];
 
@@ -37,58 +38,108 @@ function when(iso: string | null): string {
 	return iso ? new Date(iso).toLocaleString() : "unknown";
 }
 
+type View = "NEEDS" | "ANSWERED" | "DONE";
+
+const VIEW_LABEL: Record<View, string> = {
+	NEEDS: "Needs a reply",
+	ANSWERED: "Already answered",
+	DONE: "Sent / discarded",
+};
+
 export function RepliesTab() {
 	const trpc = useTRPC();
-	const [view, setView] = useState<"OPEN" | "DONE">("OPEN");
+	const [view, setView] = useState<View>("NEEDS");
 	const status = useQuery({
 		...trpc.leadgenReplies.status.queryOptions(),
 		refetchInterval: 30_000,
 	});
-	const list = useQuery({
-		...trpc.leadgenReplies.list.queryOptions({ view }),
+	const open = useQuery({
+		...trpc.leadgenReplies.list.queryOptions({ view: "OPEN" }),
 		refetchInterval: 30_000,
 	});
+	const done = useQuery({
+		...trpc.leadgenReplies.list.queryOptions({ view: "DONE" }),
+		refetchInterval: 60_000,
+	});
+	const openItems = open.data?.items ?? [];
+	const byView: Record<View, Item[]> = {
+		NEEDS: openItems.filter((i) => !i.inbound.answeredVia),
+		ANSWERED: openItems.filter((i) => !!i.inbound.answeredVia),
+		DONE: done.data?.items ?? [],
+	};
+	const current = view === "DONE" ? done : open;
+	const groups = groupByLead(byView[view]);
+	const canSend = !!status.data?.sendEnabled && !!status.data?.youAreApprover;
 
 	return (
 		<div className="flex flex-col gap-4">
 			<StatusStrip status={status.data} error={status.error?.message} />
-			<div className="flex gap-2">
-				{(["OPEN", "DONE"] as const).map((v) => (
+			<div className="flex flex-wrap gap-2">
+				{(["NEEDS", "ANSWERED", "DONE"] as const).map((v) => (
 					<Button
 						key={v}
 						size="sm"
 						variant={view === v ? "default" : "outline"}
 						onClick={() => setView(v)}
 					>
-						{v === "OPEN" ? "Awaiting your review" : "Sent / discarded"}
+						{VIEW_LABEL[v]}
+						{(v === "DONE" ? done.data : open.data)
+							? ` (${byView[v].length})`
+							: ""}
 					</Button>
 				))}
 			</div>
-			{list.isPending ? (
-				<p className="text-xs text-muted-foreground">Loading…</p>
-			) : list.isError ? (
-				<p className="text-xs text-destructive">{list.error.message}</p>
-			) : list.data.items.length === 0 ? (
+			{view === "ANSWERED" ? (
 				<p className="text-xs text-muted-foreground">
-					{view === "OPEN"
-						? "No drafts waiting. Nothing goes out unless you send it from here."
-						: "Nothing sent or discarded yet."}
+					You already answered these from your mail app. Discard the drafts here
+					once you are sure, so they stop showing up.
+				</p>
+			) : null}
+			{current.isPending ? (
+				<p className="text-xs text-muted-foreground">Loading…</p>
+			) : current.isError ? (
+				<p className="text-xs text-destructive">{current.error.message}</p>
+			) : groups.length === 0 ? (
+				<p className="rounded-md border border-border p-3 text-xs text-muted-foreground">
+					{view === "NEEDS"
+						? "All caught up. No lead reply is waiting on you."
+						: view === "ANSWERED"
+							? "Nothing here."
+							: "Nothing sent or discarded yet."}
 				</p>
 			) : (
 				<ul className="flex flex-col gap-4">
-					{list.data.items.map((item) =>
-						view === "OPEN" ? (
-							<DraftCard
-								key={item.id}
-								item={item}
-								canSend={
-									!!status.data?.sendEnabled && !!status.data?.youAreApprover
-								}
-							/>
-						) : (
-							<DoneCard key={item.id} item={item} />
-						),
-					)}
+					{groups.map((g) => (
+						<li key={g.key} className="flex flex-col gap-2">
+							{view === "DONE" ? (
+								<DoneCard item={g.latest} />
+							) : (
+								<DraftCard item={g.latest} canSend={canSend} />
+							)}
+							{g.older.length > 0 ? (
+								<details className="rounded-md border border-dashed border-border px-3 py-2 text-xs">
+									<summary className="cursor-pointer select-none text-muted-foreground">
+										{g.older.length} earlier{" "}
+										{g.older.length === 1 ? "reply" : "replies"} from{" "}
+										{g.latest.lead.businessName}
+									</summary>
+									<ul className="mt-2 flex flex-col gap-3">
+										{g.older.map((item) =>
+											view === "DONE" ? (
+												<DoneCard key={item.id} item={item} />
+											) : (
+												<DraftCard
+													key={item.id}
+													item={item}
+													canSend={canSend}
+												/>
+											),
+										)}
+									</ul>
+								</details>
+							) : null}
+						</li>
+					))}
 				</ul>
 			)}
 		</div>
@@ -104,27 +155,29 @@ function StatusStrip({
 }) {
 	if (error) return <p className="text-xs text-destructive">{error}</p>;
 	if (!status) return null;
+	const sentence = !status.sendEnabled
+		? "Sending is off on this server. You can read and edit drafts here, but replies go out from your mail app."
+		: !status.youAreApprover
+			? "Sending is on, but your account is not an approved sender."
+			: `You can send from ${status.from}. ${status.sentLast24h} of ${status.maxPerDay} sent in the last 24 hours. Nothing is sent automatically.`;
 	return (
-		<div className="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2 text-xs">
-			<Badge variant={status.sendEnabled ? "secondary" : "destructive"}>
-				Sending {status.sendEnabled ? "ON" : "OFF"}
-			</Badge>
+		<div className="flex flex-col gap-1 text-xs">
+			<p
+				className={cn(
+					"rounded-md border px-3 py-2",
+					status.sendEnabled && status.youAreApprover
+						? "border-border"
+						: "border-amber-500/40 bg-amber-500/5",
+				)}
+			>
+				{sentence}
+			</p>
 			{status.sentCheck ? (
-				<Badge variant="destructive">
-					Sent folder not confirmed: {status.sentCheck}
-				</Badge>
-			) : (
-				<Badge variant="secondary">Sent folder checked</Badge>
-			)}
-			<Badge variant={status.youAreApprover ? "secondary" : "destructive"}>
-				{status.youAreApprover
-					? "You can send"
-					: "You are not an approved sender"}
-			</Badge>
-			<span className="text-muted-foreground">
-				From {status.from} · {status.sentLast24h}/{status.maxPerDay} sent in the
-				last 24h · nothing is sent automatically
-			</span>
+				<p className="text-destructive">
+					Could not confirm your Sent folder: {status.sentCheck}. Replies you
+					sent from your mail app may still show as waiting.
+				</p>
+			) : null}
 		</div>
 	);
 }
@@ -164,9 +217,28 @@ function TheirReply({ item }: { item: Item }) {
 					</div>
 				</div>
 			</Field>
-			<div className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-2 text-xs">
-				{item.inbound.bodyText ?? "(no text)"}
+			<QuotedBody body={item.inbound.bodyText} />
+		</div>
+	);
+}
+
+function QuotedBody({ body }: { body: string | null }) {
+	const { latest, earlier } = splitQuoted(body);
+	return (
+		<div className="flex flex-col gap-1">
+			<div className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-2 text-xs">
+				{latest || "(no text)"}
 			</div>
+			{earlier ? (
+				<details className="text-xs">
+					<summary className="cursor-pointer select-none text-muted-foreground">
+						Show earlier messages
+					</summary>
+					<div className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border p-2 text-muted-foreground">
+						{earlier}
+					</div>
+				</details>
+			) : null}
 		</div>
 	);
 }
@@ -229,10 +301,13 @@ function DraftCard({ item, canSend }: { item: Item; canSend: boolean }) {
 				) : null}
 				{claimed ? <Badge variant="destructive">{item.status}</Badge> : null}
 				{item.inbound.answeredVia ? (
-					<Badge variant="destructive">
+					<Badge variant="outline">
 						{ANSWERED_LABEL[item.inbound.answeredVia] ?? "Already answered"}
 					</Badge>
 				) : null}
+				<span className="ml-auto text-muted-foreground">
+					{when(item.inbound.receivedAt)}
+				</span>
 			</div>
 
 			{item.sendError ? (

@@ -54,6 +54,10 @@ const poolRow = z.object({
 	readyToSend: z.number(),
 	callText: z.number(),
 	doNotContact: z.number(),
+	awaitingBuild: z.number(),
+	needsSendApproval: z.number(),
+	sendApprovedUnsent: z.number(),
+	newNoWebsite: z.number(),
 });
 
 const reworkRow = z.object({
@@ -83,6 +87,10 @@ const COUNT_KEYS = [
 	"readyToSend",
 	"callText",
 	"doNotContact",
+	"awaitingBuild",
+	"needsSendApproval",
+	"sendApprovedUnsent",
+	"newNoWebsite",
 ] as const;
 
 function sumCounts(rows: Counts[]): Counts {
@@ -96,6 +104,10 @@ function sumCounts(rows: Counts[]): Counts {
 		readyToSend: 0,
 		callText: 0,
 		doNotContact: 0,
+		awaitingBuild: 0,
+		needsSendApproval: 0,
+		sendApprovedUnsent: 0,
+		newNoWebsite: 0,
 	};
 	for (const row of rows) {
 		for (const key of COUNT_KEYS) totals[key] += row[key];
