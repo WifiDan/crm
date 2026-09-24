@@ -26,8 +26,14 @@ import { enrichmentQueueInput } from "@crm/validation/enrichment-queue";
 import { fieldListInput, fieldListOutput, fieldByKeyInput, serializedFieldOutput, fieldEntityInput, fieldFiltersOutput, fieldIdInput, fieldCoverageOutput, fieldCreateInput, fieldUpdateArgs, fieldReorderInput, fieldReorderOutput, fieldDeleteOutput, fieldBackfillOutput } from "../fields/fields.contracts";
 import { googleConnectionStatusOutput, setAutoCreateInput, suppressDomainInput, suppressDomainOutput, threadInput, emailThreadOutput, calendarEventInput, calendarEventOutput } from "../google/google.contracts";
 import { purgeSyncedDataOutput, revokeAccessOutput, microsoftConnectionStatusOutput, setOutlookAutoCreateInput } from "../microsoft/microsoft.contracts";
+import { demoInfoInput, demoInfoOutput, previewInput, previewOutput, saveInput, saveOutput } from "../leadgen/demo-edit.contracts";
+import { decisionStatusOutput, decideInput, decisionResultOutput, reworkInput } from "../leadgen/lead-decision.contracts";
 import { jobListOutput, jobRunsInput, jobRunsOutput, jobNameInput, jobRunNowOutput, jobSetEnabledInput, okOutput, alertListOutput, marketListOutput, leadsListInput, leadsListOutput, mirrorStatusOutput } from "../leadgen/leadgen.contracts";
+import { campaignListOutput, triageListInput, triageListOutput, reviewListInput, reviewListOutput, leadDetailInput, leadDetailOutput } from "../leadgen/lead-views.contracts";
+import { opsOverviewOutput, opsHealthOutput, opsCallListInput, opsCallListOutput, opsRecentSendsInput, opsRecentSendsOutput } from "../leadgen/ops.contracts";
 import { replyStatusOutput, replyListInput, replyListOutput, replySendInput, replySendOutput, replyDiscardInput, replyDiscardOutput } from "../leadgen/reply-approval.contracts";
+import { shotStatusInput, shotStatusOutput, shotCaptureInput, shotCaptureOutput } from "../leadgen/shot.contracts";
+import { auditInput, auditOutput } from "../leadgen/site-audit.contracts";
 import { savedViewListInput, savedViewListOutput, savedViewCreateInput, savedViewOutput, savedViewUpdateArgs, savedViewIdInput, savedViewDeleteOutput } from "../saved-views/saved-views.contracts";
 import { agentModelOutput, modelCatalogOutput, setAgentModelInput, researchKeyOutput, setResearchKeyInput, archiveRetentionOutput, setArchiveRetentionDaysInput } from "../settings/settings.contracts";
 import { slackStatusOutput, slackMatchesOutput, slackChannelsInput, slackChannelsOutput, slackJoinChannelInput, slackJoinChannelOutput, slackRefreshPeopleOutput, slackCreateChannelInput, slackCreateChannelOutput, slackDisconnectOutput } from "../slack/slack.contracts";
@@ -561,6 +567,33 @@ const appRouter = t.router({
       .output(calendarEventOutput)
       .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
     }),
+  leadgenDemos: t.router({
+    info: publicProcedure
+      .input(demoInfoInput)
+      .output(demoInfoOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    previewLink: publicProcedure
+      .input(previewInput)
+      .output(previewOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    save: publicProcedure
+      .input(saveInput)
+      .output(saveOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
+  leadgenDecisions: t.router({
+    status: publicProcedure
+      .output(decisionStatusOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    decide: publicProcedure
+      .input(decideInput)
+      .output(decisionResultOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    rework: publicProcedure
+      .input(reworkInput)
+      .output(decisionResultOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
   leadgen: t.router({
     jobs: publicProcedure
       .output(jobListOutput)
@@ -589,6 +622,35 @@ const appRouter = t.router({
       .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
     mirrorStatus: publicProcedure
       .output(mirrorStatusOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    campaigns: publicProcedure
+      .output(campaignListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    triageList: publicProcedure
+      .input(triageListInput)
+      .output(triageListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    reviewList: publicProcedure
+      .input(reviewListInput)
+      .output(reviewListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    leadDetail: publicProcedure
+      .input(leadDetailInput)
+      .output(leadDetailOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    opsOverview: publicProcedure
+      .output(opsOverviewOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    opsHealth: publicProcedure
+      .output(opsHealthOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    opsCallList: publicProcedure
+      .input(opsCallListInput)
+      .output(opsCallListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    opsRecentSends: publicProcedure
+      .input(opsRecentSendsInput)
+      .output(opsRecentSendsOutput)
       .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
     }),
   leadgenReplies: t.router({
@@ -606,6 +668,22 @@ const appRouter = t.router({
     discard: publicProcedure
       .input(replyDiscardInput)
       .output(replyDiscardOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
+  leadgenShots: t.router({
+    status: publicProcedure
+      .input(shotStatusInput)
+      .output(shotStatusOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    capture: publicProcedure
+      .input(shotCaptureInput)
+      .output(shotCaptureOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
+  leadgenAudit: t.router({
+    run: publicProcedure
+      .input(auditInput)
+      .output(auditOutput)
       .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
     }),
   microsoft: t.router({

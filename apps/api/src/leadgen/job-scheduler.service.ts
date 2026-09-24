@@ -7,6 +7,7 @@ import {
 	type OnModuleInit,
 } from "@nestjs/common";
 import { InjectDatabase } from "../database/database.constants";
+import { failureCounters } from "./imap-retry";
 import { LG_JOB_HANDLERS, type LgJobHandler } from "./job-handler";
 import { nextRunAfter } from "./schedule";
 
@@ -192,7 +193,12 @@ export class LgJobSchedulerService
 		} catch (error) {
 			const timedOut = error instanceof JobTimeoutError;
 			const text = error instanceof Error ? error.message : String(error);
-			await this.finalize(runId, timedOut ? "TIMED_OUT" : "FAILED", text, null);
+			await this.finalize(
+				runId,
+				timedOut ? "TIMED_OUT" : "FAILED",
+				text,
+				timedOut ? null : failureCounters(error),
+			);
 			await this.raiseAlert(
 				"PAGE",
 				`job-failed:${def.name}`,
