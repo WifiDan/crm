@@ -550,15 +550,13 @@ describe("decision actions", () => {
 		);
 	});
 
-	test("the review Approve control is only reachable through the confirm dialog", () => {
+	test("review Approve for sending is one click, still arms, and needs an email", () => {
 		const source = readFileSync(
 			join(import.meta.dir, "../app/(app)/[slug]/leadgen/lead-actions.tsx"),
 			"utf8",
 		);
-		expect(source).toMatch(
-			/<ApproveForSending[\s\S]*?onConfirm=\{\(\) => send\("Approved"\)\}/,
-		);
-		expect(source).toMatch(/arming \? \(\s*<ApproveForSending/);
+		expect(source).not.toContain("AlertDialog");
+		expect(source).toMatch(/disabled=\{disabledAll \|\| !current\.email\}/);
 		expect(source).toContain('confirmArm: arming && decision === "Approved"');
 		expect((source.match(/send\("Approved"\)/g) ?? []).length).toBe(2);
 	});

@@ -1,16 +1,5 @@
 "use client";
 
-import {
-	AlertDialog,
-	AlertDialogAction,
-	AlertDialogCancel,
-	AlertDialogContent,
-	AlertDialogDescription,
-	AlertDialogFooter,
-	AlertDialogHeader,
-	AlertDialogTitle,
-	AlertDialogTrigger,
-} from "@crm/ui/components/alert-dialog";
 import { Button } from "@crm/ui/components/button";
 import { Textarea } from "@crm/ui/components/textarea";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -173,12 +162,14 @@ export function LeadActions({
 			) : null}
 			<div className="flex flex-wrap items-start gap-2">
 				{arming ? (
-					<ApproveForSending
-						name={current.businessName}
-						email={current.email ?? null}
-						disabled={disabledAll}
-						onConfirm={() => send("Approved")}
-					/>
+					<Button
+						size="sm"
+						disabled={disabledAll || !current.email}
+						title={current.email ? `Emails ${current.email} at the next 08:30 send` : undefined}
+						onClick={() => send("Approved")}
+					>
+						Approve for sending
+					</Button>
 				) : (
 					<Button
 						size="sm"
@@ -233,50 +224,13 @@ export function LeadActions({
 					? "Approving here means the prospect is worth building. It does not send anything."
 					: current.table === "gym"
 						? "Gym sends stay manual. Approving here only records the decision."
-						: "Approve for sending asks you to confirm first. Reject takes the lead out of the send queue."}
+						: current.email
+							? `Approve for sending emails ${current.email} at the next 08:30 send unless a rule stops it. Reject or Needs changes pulls it back before then.`
+							: "No email on file, so this lead cannot be emailed. It is on the Call / Text list."}
 			</p>
 			{stateNote(applied) ? (
 				<p className="text-xs">{stateNote(applied)}</p>
 			) : null}
 		</div>
-	);
-}
-
-function ApproveForSending({
-	name,
-	email,
-	disabled,
-	onConfirm,
-}: {
-	name: string;
-	email: string | null;
-	disabled: boolean;
-	onConfirm: () => void;
-}) {
-	return (
-		<AlertDialog>
-			<AlertDialogTrigger asChild>
-				<Button size="sm" disabled={disabled}>
-					Approve for sending
-				</Button>
-			</AlertDialogTrigger>
-			<AlertDialogContent>
-				<AlertDialogHeader>
-					<AlertDialogTitle>Approve {name} for sending?</AlertDialogTitle>
-					<AlertDialogDescription>
-						This lead becomes eligible for the next 08:30 send. The sender
-						emails{email ? <strong> {email}</strong> : " the lead"} unless a
-						rule stops it (already mailed, replied, opt-out or do not contact).
-						You can pull it back with Reject or Needs changes before then.
-					</AlertDialogDescription>
-				</AlertDialogHeader>
-				<AlertDialogFooter>
-					<AlertDialogCancel>Cancel</AlertDialogCancel>
-					<AlertDialogAction onClick={onConfirm}>
-						Approve and allow sending
-					</AlertDialogAction>
-				</AlertDialogFooter>
-			</AlertDialogContent>
-		</AlertDialog>
 	);
 }
