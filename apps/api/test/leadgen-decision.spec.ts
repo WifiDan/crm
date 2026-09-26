@@ -67,6 +67,7 @@ type WorldOptions = {
 	readBackFails?: boolean;
 	seedAudit?: Row[];
 	auditCreateFails?: boolean;
+	lgLeadUpdateFails?: boolean;
 };
 
 function makeWorld(opts: WorldOptions = {}) {
@@ -114,35 +115,51 @@ function makeWorld(opts: WorldOptions = {}) {
 		},
 	};
 
-	const guarded = (name: string) =>
-		new Proxy(
-			{},
-			{
-				get: (_t, method: string) => {
-					if (
-						/^(update|updateMany|create|createMany|upsert|delete|deleteMany)$/.test(
-							method,
-						)
-					)
-						return async () => {
-							writes.push(`${name}.${method}`);
-							throw new Error(`${name}.${method} must not be called`);
-						};
-					if (method === "findFirst")
-						return async () => ({
-							id: "lead-1",
-							nocodbTable: table,
-							nocodbRowId: 42,
-						});
-					if (method === "findMany")
-						return async () => (opts.mailed ?? []).map((raw) => ({ raw }));
-					return undefined;
-				},
-			},
-		);
+	// lg_lead is the write-through target: `update` is the one legitimate
+	// mutation the decision service makes here, so it is tracked (not
+	// blocked) while every other mutating method stays guarded.
+	const lgLeadUpdates: Array<{ id: string; data: Row }> = [];
+	const lgLead = {
+		findFirst: async () => ({
+			id: "lead-1",
+			nocodbTable: table,
+			nocodbRowId: 42,
+		}),
+		findMany: async () => (opts.mailed ?? []).map((raw) => ({ raw })),
+		update: async ({ where, data }: { where: { id: string }; data: Row }) => {
+			if (opts.lgLeadUpdateFails)
+				throw new Error("lg_lead write-through db down");
+			lgLeadUpdates.push({ id: where.id, data });
+			return { id: where.id, ...data };
+		},
+		updateMany: async () => {
+			writes.push("lgLead.updateMany");
+			throw new Error("lgLead.updateMany must not be called");
+		},
+		create: async () => {
+			writes.push("lgLead.create");
+			throw new Error("lgLead.create must not be called");
+		},
+		createMany: async () => {
+			writes.push("lgLead.createMany");
+			throw new Error("lgLead.createMany must not be called");
+		},
+		upsert: async () => {
+			writes.push("lgLead.upsert");
+			throw new Error("lgLead.upsert must not be called");
+		},
+		delete: async () => {
+			writes.push("lgLead.delete");
+			throw new Error("lgLead.delete must not be called");
+		},
+		deleteMany: async () => {
+			writes.push("lgLead.deleteMany");
+			throw new Error("lgLead.deleteMany must not be called");
+		},
+	};
 
 	const db = {
-		lgLead: guarded("lgLead"),
+		lgLead,
 		lgLeadDecision: {
 			findUnique: async ({ where }: { where: { requestId: string } }) =>
 				audit.find((a) => a.requestId === where.requestId) ?? null,
@@ -196,6 +213,7 @@ function makeWorld(opts: WorldOptions = {}) {
 		reads,
 		columnChecks,
 		writes,
+		lgLeadUpdates,
 		get live() {
 			return live;
 		},
@@ -251,6 +269,7 @@ const untouched = (w: ReturnType<typeof makeWorld>) => {
 	expect(w.patches).toHaveLength(0);
 	expect(w.audit).toHaveLength(0);
 	expect(w.writes).toEqual([]);
+	expect(w.lgLeadUpdates).toHaveLength(0);
 };
 
 describe("Send Approved through the service (stage x decision x pool)", () => {
@@ -296,11 +315,88 @@ describe("Send Approved through the service (stage x decision x pool)", () => {
 		expect(w.columnChecks).toEqual([]);
 	});
 
-	test("the lg_lead mirror is never written", async () => {
+	test("a successful decision writes the same result through into lg_lead", async () => {
 		const w = makeWorld();
 		await decide(w);
-		await rework(w, { seen: seenOf(w.live ?? {}) });
+		expect(w.lgLeadUpdates).toHaveLength(1);
+		const update = w.lgLeadUpdates[0];
+		expect(update?.id).toBe("lead-1");
+		expect(update?.data).toMatchObject({
+			approvalDecision: "Approved",
+			sendApproved: true,
+			doNotContact: false,
+			stage: "READY",
+			mirrorMissingAt: null,
+			mirroredAt: NOW,
+		});
+		expect(update?.data.raw).toMatchObject({
+			"Approval Decision": "Approved",
+			"Decision Date": "2026-09-20",
+			"Send Approved": 1,
+		});
+		expect(typeof update?.data.rawHash).toBe("string");
 		expect(w.writes).toEqual([]);
+	});
+
+	test("rework also writes through: cleared decision and send flag", async () => {
+		const row = eligibleRow({
+			"Approval Decision": "Approved",
+			"Send Approved": 1,
+		});
+		const w = makeWorld({ row });
+		await rework(w, { seen: seenOf(row) });
+		expect(w.lgLeadUpdates).toHaveLength(1);
+		expect(w.lgLeadUpdates[0]?.data).toMatchObject({
+			approvalDecision: null,
+			sendApproved: false,
+		});
+	});
+
+	test("a failed NocoDB write leaves lg_lead untouched", async () => {
+		const w = makeWorld({
+			patchError: new NocoWriteError("rejected", 400, "NocoDB answered 400"),
+		});
+		await expect(decide(w)).rejects.toBeInstanceOf(BadGatewayException);
+		expect(w.lgLeadUpdates).toHaveLength(0);
+	});
+
+	test("an ambiguous NocoDB write also leaves lg_lead untouched", async () => {
+		const w = makeWorld({
+			patchError: new NocoWriteError(
+				"unknown",
+				null,
+				"NocoDB did not answer (TimeoutError)",
+			),
+		});
+		await expect(decide(w)).rejects.toBeInstanceOf(
+			InternalServerErrorException,
+		);
+		expect(w.lgLeadUpdates).toHaveLength(0);
+	});
+
+	test("write-through failing does not fail the decision: NocoDB already succeeded", async () => {
+		const w = makeWorld({ lgLeadUpdateFails: true });
+		const out = (await decide(w)) as Record<string, unknown>;
+		expect(out.replay).toBe(false);
+		expect(w.patches).toHaveLength(1);
+	});
+
+	test("write-through stores the new NocoDB version, so an immediate second decision on the same row is not stale", async () => {
+		const w = makeWorld();
+		const first = (await decide(w)) as Record<string, unknown>;
+		const cachedRaw = w.lgLeadUpdates[0]?.data.raw as Row;
+		const seenFromMirror = {
+			updatedAt: String(cachedRaw.UpdatedAt),
+			decision: (cachedRaw["Approval Decision"] as string | null) ?? null,
+			decisionDate: (cachedRaw["Decision Date"] as string | null) ?? null,
+		};
+		expect(seenFromMirror.updatedAt).toBe(first.version as string);
+		await decide(w, { seen: seenFromMirror, decision: "Rejected" });
+		expect(w.patches).toHaveLength(2);
+		expect(w.lgLeadUpdates).toHaveLength(2);
+		expect(w.lgLeadUpdates[1]?.data).toMatchObject({
+			approvalDecision: "Rejected",
+		});
 	});
 });
 

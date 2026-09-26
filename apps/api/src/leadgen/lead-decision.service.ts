@@ -43,6 +43,13 @@ import {
 	LG_LEAD_STORE,
 	NocoWriteError,
 } from "./lead-decision.store";
+import {
+	hashRow,
+	MIRROR_TABLES,
+	nocoRowSchema,
+	type RawRow,
+	toLeadFields,
+} from "./mirror-map";
 import type { NocoRow } from "./outreach-plan";
 import type { PythonSendState } from "./python-state";
 
@@ -435,8 +442,52 @@ export class LeadDecisionService {
 			);
 		}
 		const result = this.resultOf(audit.id, plan, after);
+		await this.writeThrough(plan, after);
 		await this.finish(audit.id, "APPLIED", "applied and verified", result);
 		return result;
+	}
+
+	/**
+	 * After a verified NocoDB write, push the same result into lg_lead so the
+	 * console shows it immediately instead of waiting up to 120s for
+	 * nocodb.mirror. Sets exactly the columns/values the mirror would derive
+	 * from this row, including rawHash and UpdatedAt, so a fresh page load
+	 * sees the new version and does not get a stale-version refusal on the
+	 * next decision. Best-effort: the guarded NocoDB write already succeeded
+	 * and is the source of truth, so a failure here is logged, not thrown —
+	 * the next mirror run (<=120s) will still catch it up.
+	 */
+	private async writeThrough(plan: Plan, after: LiveRow): Promise<void> {
+		const table = MIRROR_TABLES.find((t) => t.tableId === plan.target.tableId);
+		if (!table) return;
+		const parsed = nocoRowSchema.safeParse(after);
+		if (!parsed.success) {
+			this.logger.warn({
+				message: "write-through skipped: row failed the mirror contract",
+				leadId: plan.target.leadId,
+			});
+			return;
+		}
+		try {
+			const raw = after as unknown as RawRow;
+			await this.db.lgLead.update({
+				where: { id: plan.target.leadId },
+				data: {
+					...toLeadFields(parsed.data, table),
+					raw,
+					rawHash: hashRow(raw),
+					mirroredAt: this.clock(),
+					mirrorMissingAt: null,
+				},
+			});
+		} catch (e) {
+			this.logger.error({
+				message:
+					"write-through into lg_lead failed; the mirror will catch it up",
+				leadId: plan.target.leadId,
+				error: e instanceof Error ? e.message : String(e),
+			});
+		}
 	}
 
 	private resultOf(

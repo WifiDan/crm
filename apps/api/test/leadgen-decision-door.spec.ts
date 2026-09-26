@@ -104,18 +104,29 @@ describe("only the rules name the Send Approved write", () => {
 	});
 });
 
-describe("only the mirror handler writes lg_lead", () => {
+describe("only the mirror handler and the guarded decision write-through write lg_lead", () => {
 	const WRITES =
 		/\blgLead\.(update|updateMany|create|createMany|upsert|delete|deleteMany)\b|\bUPDATE\s+lg_lead\b|\bINSERT\s+INTO\s+lg_lead\b|\bDELETE\s+FROM\s+lg_lead\b/i;
-	test("no other source file writes it", () => {
+	const CREATE_OR_DELETE =
+		/\blgLead\.(updateMany|create|createMany|upsert|delete|deleteMany)\b|\bINSERT\s+INTO\s+lg_lead\b|\bDELETE\s+FROM\s+lg_lead\b/i;
+	test("no source file outside the mirror and the service writes it", () => {
 		const writers = files.filter((f) => WRITES.test(f.code));
-		expect(names(writers)).toEqual([at(MIRROR)]);
+		expect(names(writers)).toEqual([at(MIRROR), at(SERVICE)].sort());
 	});
-	test("the decision files never even name a write on it", () => {
-		for (const f of [RULES, STORE, SERVICE, ROUTER]) {
+	test("the rules, store and router never even name a write on it", () => {
+		for (const f of [RULES, STORE, ROUTER]) {
 			const code = files.find((x) => x.name === at(f))?.code ?? "";
 			expect({ f, hit: WRITES.test(code) }).toEqual({ f, hit: false });
 		}
+	});
+	test("the service only ever calls lgLead.update (a single row by id) — never create, delete or a bulk write", () => {
+		const code = files.find((f) => f.name === at(SERVICE))?.code ?? "";
+		expect(CREATE_OR_DELETE.test(code)).toBe(false);
+		expect(/\blgLead\.update\b/.test(code)).toBe(true);
+	});
+	test("the service's write-through targets the lead by its own id, never by NocoDB row id or a filter", () => {
+		const code = files.find((f) => f.name === at(SERVICE))?.code ?? "";
+		expect(/lgLead\.update\(\s*\{\s*where:\s*\{\s*id:/.test(code)).toBe(true);
 	});
 });
 
