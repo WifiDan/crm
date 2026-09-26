@@ -85,6 +85,7 @@ export function TriageTab({
 	const decisionCounts = list.data?.facetCounts.decision ?? {};
 	const total = list.data?.total ?? 0;
 	const everything = decisionCounts.all ?? 0;
+	const noEmailHidden = list.data?.facetCounts.email?.noEmail ?? 0;
 	const selected = list.data?.rows.find((r) => r.id === selectedId) ?? null;
 
 	// On a wide screen open the first prospect, so the detail is never blank.
@@ -185,6 +186,9 @@ export function TriageTab({
 			<p className="text-xs text-muted-foreground">
 				{total} of {everything} prospects with a website and no demo yet.
 				Approving here queues a demo build; it never sends anything.
+				{noEmailHidden > 0
+					? ` ${noEmailHidden} more have no email on file and are not shown here — no email, no build.`
+					: ""}
 			</p>
 			{list.isError ? (
 				<p className="text-xs text-destructive">{list.error.message}</p>

@@ -71,7 +71,7 @@ export class LeadgenViewsService {
 	): Promise<z.infer<typeof triageListOutput>> {
 		const where = triageWhere(input);
 		const page = paginate(input);
-		const [rows, total, decisions, pools] = await Promise.all([
+		const [rows, total, decisions, pools, emails] = await Promise.all([
 			this.db.$queryRaw(
 				Prisma.sql`SELECT ${LEAD_COLUMNS} ${LEAD_JOINS} WHERE ${where} ORDER BY ${triageOrder(input)} LIMIT ${page.take} OFFSET ${page.skip}`,
 			),
@@ -84,6 +84,10 @@ export class LeadgenViewsService {
 				Prisma.sql`COALESCE(l."nocodbTable", '')`,
 				triageWhere(input, "table"),
 			),
+			this.groupCounts(
+				Prisma.sql`(CASE WHEN l.email IS NOT NULL THEN 'withEmail' ELSE 'noEmail' END)`,
+				triageWhere(input, "email"),
+			),
 		]);
 		return {
 			rows: triageSqlRow.array().parse(rows).map(toTriageRow),
@@ -91,6 +95,7 @@ export class LeadgenViewsService {
 			facetCounts: {
 				decision: { ...decisions, all: sumOf(decisions) },
 				table: poolCounts(pools),
+				email: emails,
 			},
 		};
 	}

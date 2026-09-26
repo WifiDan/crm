@@ -241,6 +241,13 @@ describe("SQL builders bind every value", () => {
 		);
 	});
 
+	test("triage never shows a lead with no email unless the email dimension is omitted", () => {
+		expect(triageWhere(triageBase).text).toContain("l.email IS NOT NULL");
+		expect(triageWhere(triageBase, "email").text).not.toContain(
+			"l.email IS NOT NULL",
+		);
+	});
+
 	test("every review view has its own condition", () => {
 		const texts = (
 			["pending", "approved", "rejected", "placeholder", "all"] as const

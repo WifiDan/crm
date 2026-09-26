@@ -43,7 +43,7 @@ const ISP = MIRROR_TABLES.find((t) => t.key === "isp")?.tableId ?? "";
 const GYM = MIRROR_TABLES.find((t) => t.key === "gym")?.tableId ?? "";
 const PREFIX = "ZZ-views-";
 const ROW_BASE = 9_000_000;
-const COUNT = 1005;
+const COUNT = 1100;
 const SEND_COUNT = 30;
 
 type Fixture = {
@@ -86,8 +86,10 @@ function fixture(i: number): Fixture {
 const fixtures = Array.from({ length: COUNT }, (_, i) => fixture(i));
 const isPagesDemo = (f: Fixture) => f.demo?.includes(".pages.dev") ?? false;
 const isPlaceholder = (f: Fixture) => f.notes.includes("BUCKET: PLACEHOLDER");
-const isProspect = (f: Fixture) =>
+const isProspectAnyEmail = (f: Fixture) =>
 	f.demo === null && f.website !== null && !f.dnc;
+// Danio rule 2026-09-25: no email, no build — Triage hides unemailable leads.
+const isProspect = (f: Fixture) => isProspectAnyEmail(f) && f.email !== null;
 const isGymRow = (f: Fixture) => f.table === GYM;
 
 const inView = {
@@ -254,6 +256,21 @@ try {
 		(facets.table?.isp ?? 0) + (facets.table?.gym ?? 0) ===
 			prospects.filter((f) => f.decision === "Approved").length,
 		JSON.stringify(facets.table),
+	);
+	const approvedAnyEmail = fixtures.filter(
+		(f) => isProspectAnyEmail(f) && f.decision === "Approved",
+	);
+	check(
+		"triage: email facet adds up over every prospect regardless of email",
+		(facets.email?.withEmail ?? 0) + (facets.email?.noEmail ?? 0) ===
+			approvedAnyEmail.length,
+		JSON.stringify(facets.email),
+	);
+	check(
+		"triage: email facet withEmail matches the visible (emailed) prospect count",
+		facets.email?.withEmail ===
+			prospects.filter((f) => f.decision === "Approved").length,
+		`${facets.email?.withEmail}`,
 	);
 
 	for (const [key, tableId] of [

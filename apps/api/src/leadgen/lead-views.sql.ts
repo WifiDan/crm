@@ -29,6 +29,9 @@ export const PLACEHOLDER = Prisma.sql`strpos(${NOTES}, ${LEAD_VIEWS.placeholderM
 
 const IS_GYM = Prisma.sql`l."nocodbTable" = ${tableId("gym")}`;
 
+/** Danio rule 2026-09-25: no email, no build — Triage never shows an unemailable lead. */
+const HAS_EMAIL = Prisma.sql`l.email IS NOT NULL`;
+
 const DECISION = Prisma.sql`COALESCE(l."approvalDecision", '')`;
 
 /** A lead that already went out is not waiting for a send approval. */
@@ -60,9 +63,10 @@ function marketCondition(marketId: string): Prisma.Sql {
 
 export function triageWhere(
 	filters: TriageFilters,
-	omit?: "decision" | "table",
+	omit?: "decision" | "table" | "email",
 ): Prisma.Sql {
 	const conditions = [ACTIVE, PROSPECT];
+	if (omit !== "email") conditions.push(HAS_EMAIL);
 	if (filters.q.trim()) conditions.push(searchCondition(filters.q));
 	if (omit !== "decision")
 		conditions.push(...decisionCondition(filters.decision));
