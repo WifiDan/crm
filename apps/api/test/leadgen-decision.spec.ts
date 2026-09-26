@@ -398,6 +398,15 @@ describe("Send Approved through the service (stage x decision x pool)", () => {
 			approvalDecision: "Rejected",
 		});
 	});
+
+	test("a brand-new row with no UpdatedAt yet (only CreatedAt) can still be decided", async () => {
+		const row = eligibleRow({ UpdatedAt: undefined, CreatedAt: START });
+		const w = makeWorld({ row });
+		const seen = { updatedAt: START, decision: null, decisionDate: null };
+		const out = (await decide(w, { seen })) as Record<string, unknown>;
+		expect(out.replay).toBe(false);
+		expect(w.patches).toHaveLength(1);
+	});
 });
 
 describe("confirmation for the arming approval", () => {

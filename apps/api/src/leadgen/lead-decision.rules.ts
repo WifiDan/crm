@@ -145,7 +145,7 @@ const text = (v: unknown): string | null => {
 };
 
 export const versionOf = (row: LiveRow): Seen => ({
-	updatedAt: text(row.UpdatedAt) ?? "",
+	updatedAt: text(row.UpdatedAt) ?? text(row.CreatedAt) ?? "",
 	decision: text(row["Approval Decision"]),
 	decisionDate: text(row["Decision Date"]),
 });

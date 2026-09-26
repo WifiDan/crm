@@ -18,6 +18,7 @@ import {
 	staleFields,
 	statusBlockers,
 	verifyPatch,
+	versionOf,
 } from "../src/leadgen/lead-decision.rules";
 import { MIRROR_TABLES } from "../src/leadgen/mirror-map";
 
@@ -188,6 +189,31 @@ describe("version check", () => {
 		expect(
 			staleFields({ ...seen, updatedAt: "  " }, { ...live, UpdatedAt: "" }),
 		).toContain("last change time");
+	});
+});
+
+describe("brand-new rows have no UpdatedAt until NocoDB's first edit", () => {
+	const freshLive = {
+		CreatedAt: "2026-09-25 10:00:00+00:00",
+		UpdatedAt: null,
+		"Approval Decision": null,
+		"Decision Date": null,
+	};
+	test("versionOf falls back to CreatedAt when UpdatedAt is null", () => {
+		expect(versionOf(freshLive).updatedAt).toBe(freshLive.CreatedAt);
+	});
+	test("a brand-new row whose seen matches the CreatedAt fallback is fresh", () => {
+		expect(staleFields(versionOf(freshLive), freshLive)).toEqual([]);
+	});
+	test("once NocoDB stamps a real UpdatedAt, the CreatedAt-based seen version goes stale", () => {
+		const edited = { ...freshLive, UpdatedAt: "2026-09-25 11:00:00+00:00" };
+		expect(staleFields(versionOf(freshLive), edited)).toContain(
+			"last change time",
+		);
+	});
+	test("the empty-seen guard still holds when a row has neither field", () => {
+		const bare = { "Approval Decision": null, "Decision Date": null };
+		expect(staleFields(versionOf(bare), bare)).toContain("last change time");
 	});
 });
 
