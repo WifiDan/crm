@@ -18,6 +18,17 @@ export type Capability = {
 };
 
 export async function contextDevKey(): Promise<string | null> {
+	// Card #564, 2026-09-26: Danio's decision at Muster #2 was to pause every
+	// Context.dev call until the monthly credit reset, not top up. Short-circuit
+	// here rather than clearing the stored key in the database, so the real
+	// key survives intact and every downstream caller in context-dev.ts (which
+	// already treats a null key as "not configured" and skips cleanly, same
+	// as an install that never had one) needs no changes at all. Reversible by
+	// deleting this one env var once credits reset — see
+	// /opt/apps/context-dev-credit-check/ for the daily check that's meant to
+	// catch this before it silently drains to zero again.
+	if (process.env.CONTEXT_DEV_PAUSED?.trim()) return null;
+
 	try {
 		return await readContextDevKey(db);
 	} catch (error) {
