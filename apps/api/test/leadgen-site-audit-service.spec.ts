@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Db } from "@crm/db";
 import {
 	BadRequestException,
@@ -11,7 +14,10 @@ import type {
 	Transport,
 } from "../src/leadgen/outbound-guard";
 import { scoreSite } from "../src/leadgen/site-audit";
-import { SiteAuditService } from "../src/leadgen/site-audit.service";
+import {
+	type AuditEnv,
+	SiteAuditService,
+} from "../src/leadgen/site-audit.service";
 
 const PUBLIC = "93.184.216.34";
 const resolver: Resolver = async (host) => {
@@ -176,5 +182,102 @@ describe("the audit endpoint takes a lead id and only fetches that lead's own we
 		release();
 		await Promise.all(running);
 		expect((await svc.run("e")).priority).not.toBe("Error");
+	});
+});
+
+describe("the audit cache: same lead + URL is served without a fetch until it goes stale", () => {
+	let root: string;
+	beforeEach(() => {
+		root = mkdtempSync(join(tmpdir(), "audit-svc-"));
+	});
+	afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+	function service(website: string, opts: Partial<AuditEnv> = {}) {
+		const s = stub(async () => ({ status: 200, body: HTML }));
+		let clock = new Date();
+		const env: AuditEnv = { cacheDir: root, now: () => clock, ...opts };
+		return {
+			svc: new SiteAuditService(dbWith(website), s.deps, env),
+			calls: s.calls,
+			advance: (ms: number) => {
+				clock = new Date(clock.getTime() + ms);
+			},
+		};
+	}
+
+	test("without a cache env, nothing is written and every call fetches (old behaviour)", async () => {
+		const s = stub(async () => ({ status: 200, body: HTML }));
+		const svc = new SiteAuditService(
+			dbWith("https://site.example.com/"),
+			s.deps,
+		);
+		await svc.run("clead000001");
+		await svc.run("clead000001");
+		expect(s.calls.length).toBe(2);
+		expect(await svc.cached("clead000001")).toBeNull();
+	});
+
+	test("a second run for the same lead is served from cache and never fetches again", async () => {
+		const s = service("https://site.example.com/");
+		const first = await s.svc.run("clead000001");
+		expect(s.calls.length).toBe(1);
+		const second = await s.svc.run("clead000001");
+		expect(second).toEqual(first);
+		expect(s.calls.length).toBe(1);
+		expect(await s.svc.cached("clead000001")).toEqual(first);
+	});
+
+	test("force always re-fetches and refreshes the cache", async () => {
+		const s = service("https://site.example.com/");
+		await s.svc.run("clead000001");
+		await s.svc.run("clead000001", { force: true });
+		expect(s.calls.length).toBe(2);
+	});
+
+	test("the cache goes stale after 14 days", async () => {
+		const s = service("https://site.example.com/");
+		await s.svc.run("clead000001");
+		s.advance(13 * 24 * 3600 * 1000);
+		await s.svc.run("clead000001");
+		expect(s.calls.length).toBe(1);
+		s.advance(2 * 24 * 3600 * 1000);
+		await s.svc.run("clead000001");
+		expect(s.calls.length).toBe(2);
+	});
+
+	test("a failed fetch is never cached, so the next call tries again", async () => {
+		let fail = true;
+		const failCalls: HopRequest[] = [];
+		const transport: Transport = async (hop) => {
+			failCalls.push(hop);
+			if (fail) throw new Error("timed out");
+			return {
+				status: 200,
+				headers: {},
+				body: new TextEncoder().encode(HTML),
+				truncated: false,
+			};
+		};
+		const clock = new Date();
+		const svc = new SiteAuditService(
+			dbWith("https://site.example.com/"),
+			{ resolve: resolver, transport },
+			{ cacheDir: root, now: () => clock },
+		);
+		const first = await svc.run("clead000001");
+		expect(first.priority).toBe("Error");
+		expect(await svc.cached("clead000001")).toBeNull();
+		fail = false;
+		const second = await svc.run("clead000001");
+		expect(second.priority).not.toBe("Error");
+		expect(failCalls.length).toBe(2);
+	});
+
+	test("cached() checks the lead's own website, and returns null for a lead with no cache yet", async () => {
+		const s = service("https://site.example.com/");
+		expect(await s.svc.cached("clead000001")).toBeNull();
+		await s.svc.run("clead000001");
+		expect(await s.svc.cached("clead000001")).not.toBeNull();
+		expect(await s.svc.cached("clead000002")).toBeNull();
 	});
 });

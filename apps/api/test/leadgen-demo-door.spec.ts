@@ -52,10 +52,15 @@ describe("the scan is looking at real files", () => {
 describe("only demo-files.ts changes files on disk", () => {
 	const WRITE_API =
 		/\b(writeFile|writeFileSync|appendFile|copyFile|rename|unlink|rm|rmdir|mkdir|truncate|symlink|createWriteStream|chmod|utimes)\b\s*\(/;
-	test("no other leadgen file calls a file-changing API (the screenshot cache and the browser profile cleanup are the only other writers)", () => {
+	test("no other leadgen file calls a file-changing API (the screenshot cache, the audit cache and the browser profile cleanup are the only other writers)", () => {
 		const writers = leadgen.filter((f) => WRITE_API.test(f.code));
 		expect(names(writers)).toEqual(
-			[at("demo-files.ts"), at("shot-browser.ts"), at("shot-cache.ts")].sort(),
+			[
+				at("audit-cache.ts"),
+				at("demo-files.ts"),
+				at("shot-browser.ts"),
+				at("shot-cache.ts"),
+			].sort(),
 		);
 	});
 	test("demo-files.ts really holds them (the allowlist cannot go stale)", () => {
@@ -108,12 +113,16 @@ describe("the demo edit and audit routers are human-session doors", () => {
 			[at("demo-edit.router.ts"), at("leadgen.module.ts")].sort(),
 		);
 	});
-	test("only the audit router and the module import the audit service", () => {
+	test("only the audit router, the module and the prewarm service import the audit service", () => {
 		const users = leadgen.filter((f) =>
 			/["']\.\/site-audit\.service["']/.test(f.code),
 		);
 		expect(names(users)).toEqual(
-			[at("leadgen.module.ts"), at("site-audit.router.ts")].sort(),
+			[
+				at("leadgen.module.ts"),
+				at("prewarm.service.ts"),
+				at("site-audit.router.ts"),
+			].sort(),
 		);
 	});
 	test("no job handler or scheduler names any of it", () => {

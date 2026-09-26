@@ -166,6 +166,7 @@ const FIXTURES: Record<string, unknown> = {
 		stale: false,
 		url: "https://old-alpha.example.com/",
 	},
+	"leadgenAudit.cached": null,
 	"leadgenDemos.info": {
 		hasLocal: true,
 		slug: "alpha-demo",
@@ -271,6 +272,9 @@ const { TriageTab } = await import("../app/(app)/[slug]/leadgen/triage-tab");
 const { ReviewTab, DemoDetail } = await import(
 	"../app/(app)/[slug]/leadgen/review-tab"
 );
+const { ProspectDetail } = await import(
+	"../app/(app)/[slug]/leadgen/triage-tab"
+);
 const { OpsTab } = await import("../app/(app)/[slug]/leadgen/ops-tab");
 const { SystemTab } = await import("../app/(app)/[slug]/leadgen/system-tab");
 const { LocalDemoPane } = await import(
@@ -278,6 +282,9 @@ const { LocalDemoPane } = await import(
 );
 const { SiteShot } = await import(
 	"../app/(app)/[slug]/leadgen/site-shot-panel"
+);
+const { SiteAuditPanel } = await import(
+	"../app/(app)/[slug]/leadgen/site-audit-panel"
 );
 
 import type { ActionLead } from "../app/(app)/[slug]/leadgen/lead-actions-state";
@@ -742,6 +749,30 @@ describe("Triage detail, 2b additions", () => {
 	});
 });
 
+describe("Triage detail, decision at the top", () => {
+	const out = html(
+		<ProspectDetail
+			id="lead-1"
+			row={identity as never}
+			applied={undefined}
+			onApplied={() => undefined}
+			onBack={() => undefined}
+		/>,
+	);
+
+	test("the decision panel renders above the screenshot and site audit, so no scroll is needed", () => {
+		expect(out).toContain(">Approve<");
+		expect(out.indexOf(">Approve<")).toBeLessThan(
+			out.indexOf("Their current site"),
+		);
+	});
+
+	test("Approve is plain at triage (no confirm dialog, no send wording)", () => {
+		expect(out).not.toContain("Approve for sending");
+		expect(out).toContain("does not send anything");
+	});
+});
+
 describe("local copy pane", () => {
 	const out = html(<LocalDemoPane leadId="lead-1" name="Alpha Plumbing" />);
 	test("offers editing to an approver and says nothing is live", () => {
@@ -813,6 +844,33 @@ describe("screenshot panel", () => {
 			);
 		} finally {
 			FIXTURES["leadgenShots.status"] = base;
+		}
+	});
+});
+
+describe("audit panel", () => {
+	test("with nothing cached yet, offers the button and no result", () => {
+		const view = html(<SiteAuditPanel leadId="lead-1" />);
+		expect(view).toContain(">Audit their site<");
+		expect(view).not.toContain(">Re-audit their site<");
+		expect(view).not.toContain("Priority:");
+	});
+
+	test("a cached audit shows immediately, with no click needed", () => {
+		const base = FIXTURES["leadgenAudit.cached"];
+		FIXTURES["leadgenAudit.cached"] = {
+			score: 45,
+			priority: "Medium",
+			signals: ["No mobile viewport meta tag (not responsive)"],
+			url: "https://old-alpha.example.com/",
+		};
+		try {
+			const view = html(<SiteAuditPanel leadId="lead-1" />);
+			expect(view).toContain("Priority: Medium | Score: 45/100");
+			expect(view).toContain("No mobile viewport meta tag");
+			expect(view).toContain(">Re-audit their site<");
+		} finally {
+			FIXTURES["leadgenAudit.cached"] = base;
 		}
 	});
 });

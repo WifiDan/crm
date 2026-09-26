@@ -22,6 +22,7 @@ import {
 	ToneBadge,
 } from "./lead-parts";
 import { MirrorFreshness, useDebounced } from "./leadgen-format";
+import { usePrewarmWindow } from "./prewarm";
 import { SiteAuditPanel } from "./site-audit-panel";
 import { SiteShot } from "./site-shot-panel";
 import { reviewStateOf } from "./stage-labels";
@@ -99,6 +100,13 @@ export function ReviewTab() {
 		if (window.matchMedia?.("(min-width: 1280px)").matches)
 			setSelectedId(firstId);
 	}, [selectedId, firstId]);
+
+	// Keep the next few demos' screenshot + audit of the old site warm so
+	// stepping to the next one renders instantly.
+	usePrewarmWindow(
+		rows.map((r) => r.id),
+		selectedId,
+	);
 
 	// j / k move through the list. Nothing is decided from the keyboard.
 	useEffect(() => {

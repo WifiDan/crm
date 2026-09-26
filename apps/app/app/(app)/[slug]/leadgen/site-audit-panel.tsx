@@ -2,14 +2,18 @@
 
 import { Badge } from "@crm/ui/components/badge";
 import { Button } from "@crm/ui/components/button";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTRPC } from "@/lib/trpc/client";
 import { auditView } from "./site-audit-view";
 
 export function SiteAuditPanel({ leadId }: { leadId: string }) {
 	const trpc = useTRPC();
+	const cached = useQuery(
+		trpc.leadgenAudit.cached.queryOptions({ id: leadId }),
+	);
 	const audit = useMutation(trpc.leadgenAudit.run.mutationOptions());
-	const view = audit.data ? auditView(audit.data) : null;
+	const data = audit.data ?? cached.data ?? null;
+	const view = data ? auditView(data) : null;
 	return (
 		<div className="flex flex-col gap-2 text-xs">
 			<div className="flex flex-wrap items-center gap-2">
@@ -17,15 +21,22 @@ export function SiteAuditPanel({ leadId }: { leadId: string }) {
 					size="sm"
 					variant="outline"
 					disabled={audit.isPending}
-					onClick={() => audit.mutate({ id: leadId })}
+					onClick={() => audit.mutate({ id: leadId, force: true })}
 				>
-					{audit.isPending ? "Auditing…" : "Audit their site"}
+					{audit.isPending
+						? "Auditing…"
+						: data
+							? "Re-audit their site"
+							: "Audit their site"}
 				</Button>
 				<span className="text-muted-foreground">
 					Scores how dated their site looks. Fetches only this lead's own
 					website.
 				</span>
 			</div>
+			{cached.isLoading && !data ? (
+				<p className="text-muted-foreground">Checking for a cached audit…</p>
+			) : null}
 			{audit.isError ? (
 				<p className="text-destructive">{audit.error.message}</p>
 			) : null}

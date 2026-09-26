@@ -19,6 +19,7 @@ import {
 	SectionTitle,
 } from "./lead-parts";
 import { MirrorFreshness, useDebounced } from "./leadgen-format";
+import { usePrewarmWindow } from "./prewarm";
 import { SiteAuditPanel } from "./site-audit-panel";
 import { SiteShot } from "./site-shot-panel";
 
@@ -93,6 +94,12 @@ export function TriageTab({
 		if (window.matchMedia?.("(min-width: 1024px)").matches)
 			setSelectedId(firstId);
 	}, [selectedId, firstId]);
+
+	// Keep the next few prospects' screenshot + audit warm so opening one
+	// after a decision renders instantly instead of waiting on a fresh
+	// capture or a live site fetch.
+	const rowIds = list.data?.rows.map((r) => r.id) ?? [];
+	usePrewarmWindow(rowIds, selectedId);
 
 	return (
 		<div className="flex min-w-0 flex-col gap-3">
@@ -311,7 +318,7 @@ function ProspectCard({
 	);
 }
 
-function ProspectDetail({
+export function ProspectDetail({
 	id,
 	row,
 	applied,
@@ -364,6 +371,21 @@ function ProspectDetail({
 				<PoolBadge table={lead.table} />
 				<DecisionBadge decision={lead.decision} />
 			</div>
+			<LeadActions
+				lead={{
+					id: lead.id,
+					table: lead.table,
+					businessName: lead.businessName,
+					decision: lead.decision,
+					decisionDate: lead.decisionDate,
+					version: lead.version,
+					doNotContact: detail.data?.doNotContact ?? false,
+					email: detail.data?.email ?? null,
+				}}
+				stage="triage"
+				applied={applied}
+				onApplied={onApplied}
+			/>
 			<LeadFacts lead={lead} />
 			<SectionTitle>Their current site</SectionTitle>
 			{lead.oldSite ? (
@@ -395,21 +417,6 @@ function ProspectDetail({
 			<NotesBlock
 				notes={detail.data?.notes ?? row?.notes ?? ""}
 				truncated={detail.data?.notesTruncated ?? row?.notesTruncated ?? false}
-			/>
-			<LeadActions
-				lead={{
-					id: lead.id,
-					table: lead.table,
-					businessName: lead.businessName,
-					decision: lead.decision,
-					decisionDate: lead.decisionDate,
-					version: lead.version,
-					doNotContact: detail.data?.doNotContact ?? false,
-					email: detail.data?.email ?? null,
-				}}
-				stage="triage"
-				applied={applied}
-				onApplied={onApplied}
 			/>
 		</div>
 	);

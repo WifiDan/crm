@@ -31,9 +31,10 @@ import { decisionStatusOutput, decideInput, decisionResultOutput, reworkInput } 
 import { jobListOutput, jobRunsInput, jobRunsOutput, jobNameInput, jobRunNowOutput, jobSetEnabledInput, okOutput, alertListOutput, marketListOutput, leadsListInput, leadsListOutput, mirrorStatusOutput } from "../leadgen/leadgen.contracts";
 import { campaignListOutput, triageListInput, triageListOutput, reviewListInput, reviewListOutput, leadDetailInput, leadDetailOutput } from "../leadgen/lead-views.contracts";
 import { opsOverviewOutput, opsHealthOutput, opsCallListInput, opsCallListOutput, opsRecentSendsInput, opsRecentSendsOutput } from "../leadgen/ops.contracts";
+import { prewarmInput, prewarmOutput } from "../leadgen/prewarm.contracts";
 import { replyStatusOutput, replyListInput, replyListOutput, replySendInput, replySendOutput, replyDiscardInput, replyDiscardOutput } from "../leadgen/reply-approval.contracts";
 import { shotStatusInput, shotStatusOutput, shotCaptureInput, shotCaptureOutput } from "../leadgen/shot.contracts";
-import { auditInput, auditOutput } from "../leadgen/site-audit.contracts";
+import { auditCachedInput, auditCachedOutput, auditInput, auditOutput } from "../leadgen/site-audit.contracts";
 import { savedViewListInput, savedViewListOutput, savedViewCreateInput, savedViewOutput, savedViewUpdateArgs, savedViewIdInput, savedViewDeleteOutput } from "../saved-views/saved-views.contracts";
 import { agentModelOutput, modelCatalogOutput, setAgentModelInput, researchKeyOutput, setResearchKeyInput, archiveRetentionOutput, setArchiveRetentionDaysInput } from "../settings/settings.contracts";
 import { slackStatusOutput, slackMatchesOutput, slackChannelsInput, slackChannelsOutput, slackJoinChannelInput, slackJoinChannelOutput, slackRefreshPeopleOutput, slackCreateChannelInput, slackCreateChannelOutput, slackDisconnectOutput } from "../slack/slack.contracts";
@@ -653,6 +654,12 @@ const appRouter = t.router({
       .output(opsRecentSendsOutput)
       .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
     }),
+  leadgenPrewarm: t.router({
+    prepare: publicProcedure
+      .input(prewarmInput)
+      .output(prewarmOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
   leadgenReplies: t.router({
     status: publicProcedure
       .output(replyStatusOutput)
@@ -681,6 +688,10 @@ const appRouter = t.router({
       .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
     }),
   leadgenAudit: t.router({
+    cached: publicProcedure
+      .input(auditCachedInput)
+      .output(auditCachedOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
     run: publicProcedure
       .input(auditInput)
       .output(auditOutput)

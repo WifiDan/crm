@@ -28,6 +28,8 @@ import { NocodbMirrorHandler } from "./nocodb-mirror.handler";
 import { LeadgenOpsService } from "./ops.service";
 import { OutreachCompareHandler } from "./outreach-compare.handler";
 import { OutreachShadowHandler } from "./outreach-shadow.handler";
+import { PrewarmRouter } from "./prewarm.router";
+import { LeadgenPrewarmService } from "./prewarm.service";
 import { loadPythonSendState } from "./python-state";
 import { RepliesDraftHandler } from "./replies-draft.handler";
 import { RepliesPollHandler } from "./replies-poll.handler";
@@ -48,7 +50,11 @@ import {
 	LG_SHOT_ENV,
 } from "./shot.service";
 import { SiteAuditRouter } from "./site-audit.router";
-import { SiteAuditService } from "./site-audit.service";
+import {
+	defaultAuditEnv,
+	LG_AUDIT_ENV,
+	SiteAuditService,
+} from "./site-audit.service";
 
 @Module({
 	imports: [TrpcModule],
@@ -107,6 +113,7 @@ import { SiteAuditService } from "./site-audit.service";
 		{ provide: LG_DECISION_CLOCK, useValue: defaultDecisionClock },
 		LeadDecisionService,
 		LeadDecisionRouter,
+		{ provide: LG_AUDIT_ENV, useFactory: () => defaultAuditEnv(process.env) },
 		SiteAuditService,
 		SiteAuditRouter,
 		{ provide: LG_DEMO_DIRS, useFactory: () => defaultDemoDirs(process.env) },
@@ -118,6 +125,8 @@ import { SiteAuditService } from "./site-audit.service";
 		{ provide: LG_SHOT_ENV, useFactory: () => defaultShotEnv(process.env) },
 		LeadgenShotService,
 		ShotRouter,
+		LeadgenPrewarmService,
+		PrewarmRouter,
 	],
 	exports: [LgJobSchedulerService, LeadgenService],
 })
