@@ -12,6 +12,7 @@ const searchHitOutput = z.object({
 	id: z.string(),
 	label: z.string(),
 	detail: z.string().nullable(),
+	domain: z.string().nullable(),
 	iconUrl: z.string().nullable(),
 	iconDarkUrl: z.string().nullable(),
 	iconTone: z.string().nullable(),

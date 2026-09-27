@@ -21,6 +21,7 @@ export type EnrichmentQueueSubject =
 			kind: "company";
 			id: string;
 			name: string;
+			domain: string | null;
 			logoUrl: string | null;
 			logoDarkUrl: string | null;
 			logoTone: string | null;
@@ -133,6 +134,7 @@ export class EnrichmentService {
 						select: {
 							id: true,
 							name: true,
+							domain: true,
 							iconUrl: true,
 							logoUrl: true,
 							iconDarkUrl: true,
@@ -165,6 +167,7 @@ export class EnrichmentService {
 					kind: "company" as const,
 					id: company.id,
 					name: company.name,
+					domain: company.domain,
 					logoUrl: company.iconUrl ?? company.logoUrl,
 					logoDarkUrl: company.iconDarkUrl ?? company.logoDarkUrl,
 					logoTone: company.iconTone,

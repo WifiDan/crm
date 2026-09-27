@@ -18,6 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { parseAsBoolean, useQueryState } from "nuqs";
 import { useEffect, useState } from "react";
 import { useOpenRecord } from "@/components/crm/record-sheet/record-stack";
+import { companyLogoDarkSrc, companyLogoSrc } from "@/lib/company-logo";
 import { SEARCH_PARAM } from "@/lib/search-param-keys";
 import { useTRPC } from "@/lib/trpc/client";
 
@@ -105,8 +106,8 @@ export function QuickSwitcher() {
 											/>
 										) : (
 											<EntityLogo
-												src={hit.iconUrl}
-												darkSrc={hit.iconDarkUrl}
+												src={companyLogoSrc(hit)}
+												darkSrc={companyLogoDarkSrc(hit)}
 												tone={hit.iconTone as EntityLogoTone | null | undefined}
 												name={hit.label}
 												size="sm"

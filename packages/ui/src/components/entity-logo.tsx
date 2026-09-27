@@ -101,10 +101,14 @@ function Artwork({
 		alt: "",
 		loading: "lazy",
 		decoding: "async",
-		referrerPolicy: "no-referrer",
 		onError,
 		className,
 	} as const;
+
+	// Context.dev Logo Link is referer-restricted: it needs the real page
+	// origin as Referer or it 403s. Every other stored icon/logo keeps
+	// no-referrer so we do not leak our origin to arbitrary domains.
+	const referrerPolicy = isLogoLinkSrc(src) ? undefined : "no-referrer";
 
 	return (
 		<Image
@@ -112,7 +116,16 @@ function Artwork({
 			width={px}
 			height={px}
 			unoptimized={!isOptimizable(src)}
+			referrerPolicy={referrerPolicy}
 			{...shared}
 		/>
 	);
+}
+
+function isLogoLinkSrc(src: string): boolean {
+	try {
+		return new URL(src).hostname === "logos.context.dev";
+	} catch {
+		return false;
+	}
 }

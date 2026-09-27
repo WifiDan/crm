@@ -53,6 +53,7 @@ import {
 	type DetailSheetTab,
 } from "@/components/detail-sheet";
 import { LocalDay } from "@/components/local-date-time";
+import { companyLogoDarkSrc, companyLogoSrc } from "@/lib/company-logo";
 import { OPEN_STAGES } from "@/lib/deal-stage";
 import { ENRICHMENT_POLL_MS, isEnriching } from "@/lib/enrichment-status";
 import { savingField } from "@/lib/pending-field";
@@ -241,8 +242,8 @@ export function CompanySheet({ companyId }: { companyId: string }) {
 			}
 			media={
 				<EntityLogo
-					src={company?.iconUrl ?? company?.logoUrl}
-					darkSrc={company?.iconDarkUrl}
+					src={company ? companyLogoSrc(company) : null}
+					darkSrc={company ? companyLogoDarkSrc(company) : null}
 					tone={company?.iconTone as EntityLogoTone | null | undefined}
 					name={company?.name ?? "?"}
 					size="lg"

@@ -52,6 +52,7 @@ import {
 	type DetailSheetTab,
 } from "@/components/detail-sheet";
 import { LocalDateTime, LocalRelativeDate } from "@/components/local-date-time";
+import { companyLogoDarkSrc, companyLogoSrc } from "@/lib/company-logo";
 import { factsByField } from "@/lib/contact-facts";
 import { ENRICHMENT_POLL_MS, isEnriching } from "@/lib/enrichment-status";
 import { savingField } from "@/lib/pending-field";
@@ -274,8 +275,8 @@ function CompanyStat({
 			className="flex min-w-0 items-center gap-2 underline-offset-2 hover:underline"
 		>
 			<EntityLogo
-				src={company.iconUrl}
-				darkSrc={company.iconDarkUrl}
+				src={companyLogoSrc(company)}
+				darkSrc={companyLogoDarkSrc(company)}
 				tone={company.iconTone as EntityLogoTone | null | undefined}
 				name={company.name}
 				size="xs"
