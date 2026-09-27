@@ -6,6 +6,7 @@ import { readAgentTriggerConfig } from "@crm/validation/agent-manifest";
 import type { SendFn } from "eve/channels";
 import { z } from "zod";
 import { DISPATCH } from "./dispatch-config";
+import { isDispatchPaused } from "./quota-pause";
 import { DEPENDENCY_UNAVAILABLE, runDependencyFailure } from "./run-preflight";
 import {
 	isTerminalRunStatus,
@@ -226,6 +227,10 @@ export async function dispatchBuilderSubmission(
 }
 
 export async function queueDueAgentRuns(now = new Date()): Promise<number> {
+	// Card #589: stop creating new QUEUED runs while paused — there is no
+	// point growing the backlog further while the provider is broke.
+	if (await isDispatchPaused()) return 0;
+
 	const triggers = await db.agentTrigger.findMany({
 		where: {
 			enabled: true,
@@ -390,6 +395,11 @@ export async function queueEventAgentRuns(
 }
 
 export async function pendingAgentRunIds(): Promise<string[]> {
+	// Card #589: don't dispatch (or even reconcile) more runs while the
+	// provider quota/credit breaker is tripped — leave QUEUED runs QUEUED
+	// (waiting) instead of sending them into another failed call.
+	if (await isDispatchPaused()) return [];
+
 	await recoverAgentRuns();
 	const rows = await db.agentRun.findMany({
 		where: {
