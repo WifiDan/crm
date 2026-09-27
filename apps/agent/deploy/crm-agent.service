@@ -19,18 +19,18 @@ Environment=HOST=127.0.0.1
 Environment=NITRO_HOST=127.0.0.1
 Environment=AGENT_PORT=2000
 
-# Card #589: hard memory ceiling for the whole cgroup (heap + everything
+# Card #589 (2026-09-27 retune: 2G starved eve start's boot-time compile -- 82k MemoryHigh throttles, never reached :2000): hard memory ceiling for the whole cgroup (heap + everything
 # else the process holds -- streams, buffers, native deps). Below the
 # world-local queue blowing past ~2GB is what triggered the kernel OOM
 # killer against other processes on Joshua; this makes THIS unit the one
 # that gets killed (cleanly, restartable) instead of the box.
-MemoryMax=2G
-MemoryHigh=1800M
+MemoryMax=3584M
+MemoryHigh=3G
 
 # V8 heap cap set comfortably under MemoryMax so V8's own GC pressure
 # kicks in before the cgroup does -- leaves ~500MB of headroom for
 # non-heap RSS (buffers, native addons, thread stacks).
-Environment=NODE_OPTIONS=--max-old-space-size=1536
+Environment=NODE_OPTIONS=--max-old-space-size=3072
 
 # Card #589: stop the mass re-delivery of every "active" workflow run on
 # every process start (this is what turned one OOM into a crash loop that
