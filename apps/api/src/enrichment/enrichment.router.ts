@@ -18,6 +18,7 @@ const enrichmentCompanySubjectOutput = z.object({
 	kind: z.literal("company"),
 	id: z.string(),
 	name: z.string(),
+	domain: z.string().nullable(),
 	logoUrl: z.string().nullable(),
 	logoDarkUrl: z.string().nullable(),
 	logoTone: z.string().nullable(),

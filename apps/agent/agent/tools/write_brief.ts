@@ -5,12 +5,13 @@ import { WEIGHTS } from "../lib/evidence";
 import { writeBrief } from "../lib/facts";
 import { focusOn } from "../lib/focus";
 import { assertResearchPurpose } from "../lib/session-purpose";
+import { verifyEvidence } from "../lib/sources";
 
 const MAX_NARRATIVE = 400;
 
 export default defineTool({
 	description:
-		"Write the Background panel on a contact: a short narrative plus the structured lines under it. Replaces the previous one. Every claim must come from something you read.",
+		"Write the Background panel on a contact: a short narrative plus the structured lines under it. Replaces the previous one. Every claim must come from something you read — evidence that names an outside page is refused unless this session actually fetched that page.",
 	inputSchema: z.object({
 		contactId: z.string(),
 		narrative: z
@@ -46,11 +47,25 @@ export default defineTool({
 				}),
 			)
 			.min(1),
-		sourceUrl: z.string().optional(),
+		sourceUrl: z
+			.string()
+			.optional()
+			.describe(
+				"The page these claims came from. Required in practice for any evidence that is not our own mail or calendar, and it must be a page fetched in this session.",
+			),
 	}),
 	async execute(input, ctx) {
 		assertResearchPurpose(ctx);
 		focusOn({ contactId: input.contactId });
+
+		const sourced = verifyEvidence({
+			evidence: input.evidence as Evidence[],
+			sourceUrl: input.sourceUrl,
+		});
+
+		if (!sourced.ok) {
+			return { written: false as const, reason: sourced.reason };
+		}
 
 		const narrative = input.narrative.trim();
 

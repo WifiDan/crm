@@ -139,21 +139,48 @@ export type ExternalFilterOptions = {
 	ourAddresses: ReadonlySet<string>;
 	suppressedDomains: ReadonlySet<string>;
 	suppressedEmails: ReadonlySet<string>;
+	/**
+	 * Addresses the CRM already holds on a contact or a company. These are
+	 * people we have deliberately recorded, so the heuristics that exist to
+	 * stop *unknown* mail creating junk records should not apply to them.
+	 */
+	knownAddresses?: ReadonlySet<string>;
 };
 
+/**
+ * Narrow a thread's participants down to the outside people worth filing it
+ * against.
+ *
+ * Two of the filters here — "the domain is a free mail provider" and "the
+ * local part looks like a role account" — exist to stop an unknown address
+ * inventing a company called Gmail, or filing a newsletter against a real one.
+ * They are the right default for a stranger and the wrong one for a contact we
+ * already track: a great many small businesses publish exactly a `gmail.com`
+ * address or exactly `info@`, and applying the heuristics to them silently
+ * drops the mail we most want to see. An address already on a contact or
+ * company record therefore skips both.
+ *
+ * Suppression, our own addresses, and machine senders are still honoured for
+ * everyone — those are decisions, not guesses.
+ */
 export function externalParticipants(
 	participants: readonly Participant[],
 	options: ExternalFilterOptions,
 ): Participant[] {
+	const known = options.knownAddresses ?? new Set<string>();
+
 	return participants.filter((participant) => {
 		if (options.ourAddresses.has(participant.email)) return false;
 		if (options.suppressedEmails.has(participant.email)) return false;
 		if (isMachineAddress(participant.email)) return false;
 
 		const domain = workDomain(participant.email);
+		if (domain && options.ourDomains.has(domain)) return false;
+		if (domain && options.suppressedDomains.has(domain)) return false;
+
+		if (known.has(participant.email)) return true;
+
 		if (!domain) return false;
-		if (options.ourDomains.has(domain)) return false;
-		if (options.suppressedDomains.has(domain)) return false;
 		if (isAutomatedAddress(participant.email)) return false;
 
 		return true;

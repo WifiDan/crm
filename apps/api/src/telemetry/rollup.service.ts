@@ -156,6 +156,7 @@ export class RollupService {
 			cap_agent_bridge: isSet("AGENT_BRIDGE_SECRET"),
 			cap_cron_secret: isSet("CRON_SECRET"),
 			cap_ai_gateway: isSet("AI_GATEWAY_API_KEY"),
+			cap_anthropic: isSet("ANTHROPIC_API_KEY"),
 			cap_google_oauth:
 				isSet("GOOGLE_CLIENT_ID") && isSet("GOOGLE_CLIENT_SECRET"),
 			cap_sso_provider: ssoProviders > 0,
@@ -163,6 +164,7 @@ export class RollupService {
 
 			agent_model_id: model?.id ?? null,
 			agent_model_context_window: model?.contextWindowTokens ?? null,
+			agent_model_routing: model?.routing ?? null,
 		};
 	}
 

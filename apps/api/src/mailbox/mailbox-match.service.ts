@@ -84,15 +84,49 @@ export class MailboxMatchService {
 		return new Set(rows.map((row) => row.email.toLowerCase()));
 	}
 
+	/**
+	 * The subset of these addresses the CRM already holds, on either a contact
+	 * or a company. One indexed lookup per message, and it is what lets a
+	 * recorded `gmail.com` or `info@` address survive the participant filters.
+	 */
+	private async knownAddresses(
+		addresses: readonly string[],
+	): Promise<Set<string>> {
+		if (addresses.length === 0) return new Set();
+
+		const [contacts, companies] = await Promise.all([
+			this.db.contact.findMany({
+				where: { email: { in: [...addresses] } },
+				select: { email: true },
+			}),
+			this.db.company.findMany({
+				where: { email: { in: [...addresses] } },
+				select: { email: true },
+			}),
+		]);
+
+		const known = new Set<string>();
+		for (const row of [...contacts, ...companies]) {
+			if (row.email) known.add(row.email.toLowerCase());
+		}
+
+		return known;
+	}
+
 	async resolve(
 		request: MatchRequest,
 		context: MatchContext,
 	): Promise<MatchResult> {
+		const recorded = await this.knownAddresses(
+			request.participants.map((person) => person.email),
+		);
+
 		const external = externalParticipants(request.participants, {
 			ourDomains: context.ourDomains,
 			ourAddresses: context.ourAddresses,
 			suppressedDomains: context.suppressedDomains,
 			suppressedEmails: context.suppressedEmails,
+			knownAddresses: recorded,
 		});
 
 		if (external.length === 0) {
@@ -110,6 +144,19 @@ export class MailboxMatchService {
 				contactId: contact.id,
 				external,
 			};
+		}
+
+		// A company's own published address is often on a free provider, where
+		// there is no domain to match on. Matching it by address is the only
+		// way that mail reaches the right account, and it never creates
+		// anything — an unrecognised address still falls through below.
+		const byEmail = await this.db.company.findFirst({
+			where: { email: { in: external.map((person) => person.email) } },
+			select: { id: true },
+		});
+
+		if (byEmail) {
+			return { companyId: byEmail.id, contactId: null, external };
 		}
 
 		const domains = [

@@ -45,6 +45,14 @@
 			}
 		},
 		{
+			"files": ["apps/agent/test/eve-context.ts"],
+			"rules": {
+				"anti-slop/no-object-parameters": "off",
+				"anti-slop/no-unknown-parameters": "off",
+				"anti-slop/no-unknown-type-aliases": "off"
+			}
+		},
+		{
 			"files": ["packages/validation/src/**"],
 			"rules": {
 				"anti-slop/no-unknown-parameters": "off"

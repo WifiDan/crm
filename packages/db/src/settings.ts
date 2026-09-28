@@ -7,15 +7,46 @@ import {
 
 export const SETTINGS_ID = "app";
 
+/**
+ * The model the agent runs on when nobody has chosen one.
+ *
+ * This one is reached *directly* at Anthropic with `ANTHROPIC_API_KEY`, not
+ * through the Vercel AI Gateway — the agent authors it as an AI SDK
+ * `LanguageModel` rather than as a model-id string.
+ *
+ * Two ids, because two things need naming:
+ * - `id` is the gateway-form identifier. It is what eve reports as the
+ *   compiled model's identity, what the model catalogue lists it under, and
+ *   what a human is shown. It does not imply the call goes via the gateway.
+ * - `providerModelId` is Anthropic's own id, which is what `anthropic(...)`
+ *   takes. Anthropic writes the version with a hyphen where the gateway
+ *   writes a dot, so the two spellings have to be kept in step by hand.
+ *
+ * `contextWindowTokens` is stated here rather than looked up, so that neither
+ * the build nor the settings page needs the gateway catalogue to be reachable
+ * in order to describe the default.
+ */
 export const DEFAULT_AGENT_MODEL = {
-	id: "zai/glm-5.2-fast",
-	contextWindowTokens: 1_000_000,
+	id: "anthropic/claude-haiku-4.5",
+	providerModelId: "claude-haiku-4-5",
+	contextWindowTokens: 200_000,
 } as const;
+
+/**
+ * How a model call reaches the provider.
+ *
+ * `direct` is the default model, which talks to Anthropic itself. `gateway` is
+ * anything chosen on the settings page: those selections cross the agent
+ * boundary as model-id strings, and a model-id string is routed through the
+ * Vercel AI Gateway.
+ */
+export type AgentModelRouting = "direct" | "gateway";
 
 export interface AgentModelSetting {
 	id: string;
 	contextWindowTokens: number;
 	isDefault: boolean;
+	routing: AgentModelRouting;
 }
 
 export async function readAgentModel(db: Db): Promise<AgentModelSetting> {
@@ -25,7 +56,12 @@ export async function readAgentModel(db: Db): Promise<AgentModelSetting> {
 	});
 
 	if (!row?.agentModelId) {
-		return { ...DEFAULT_AGENT_MODEL, isDefault: true };
+		return {
+			id: DEFAULT_AGENT_MODEL.id,
+			contextWindowTokens: DEFAULT_AGENT_MODEL.contextWindowTokens,
+			isDefault: true,
+			routing: "direct",
+		};
 	}
 
 	return {
@@ -33,6 +69,7 @@ export async function readAgentModel(db: Db): Promise<AgentModelSetting> {
 		contextWindowTokens:
 			row.agentModelContextWindow ?? DEFAULT_AGENT_MODEL.contextWindowTokens,
 		isDefault: false,
+		routing: "gateway",
 	};
 }
 

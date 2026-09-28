@@ -54,6 +54,7 @@ import {
 	LocalDay,
 	LocalRelativeTime,
 } from "@/components/local-date-time";
+import { companyLogoDarkSrc, companyLogoSrc } from "@/lib/company-logo";
 import { savingField } from "@/lib/pending-field";
 import { useCrmCache } from "@/lib/trpc/cache";
 import { useTRPC } from "@/lib/trpc/client";
@@ -186,8 +187,8 @@ export function DealSheet({ dealId }: { dealId: string }) {
 			media={
 				deal ? (
 					<EntityLogo
-						src={deal.company.iconUrl}
-						darkSrc={deal.company.iconDarkUrl}
+						src={companyLogoSrc(deal.company)}
+						darkSrc={companyLogoDarkSrc(deal.company)}
 						tone={deal.company.iconTone as EntityLogoTone | null | undefined}
 						name={deal.company.name}
 						size="lg"

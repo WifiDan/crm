@@ -7,6 +7,7 @@ export type SearchHit = {
 	id: string;
 	label: string;
 	detail: string | null;
+	domain: string | null;
 	iconUrl: string | null;
 	iconDarkUrl: string | null;
 	iconTone: string | null;
@@ -71,6 +72,7 @@ export class SearchService {
 					company: {
 						select: {
 							name: true,
+							domain: true,
 							iconUrl: true,
 							iconDarkUrl: true,
 							iconTone: true,
@@ -88,6 +90,7 @@ export class SearchService {
 						id: company.id,
 						label: company.name,
 						detail: company.domain,
+						domain: company.domain,
 						iconUrl: company.iconUrl,
 						iconDarkUrl: company.iconDarkUrl,
 						iconTone: company.iconTone,
@@ -102,6 +105,7 @@ export class SearchService {
 							[contact.firstName, contact.lastName].filter(Boolean).join(" ") ||
 							(contact.email ?? "Unnamed"),
 						detail: contact.company?.name ?? contact.email,
+						domain: null,
 						iconUrl: null,
 						iconDarkUrl: null,
 						iconTone: null,
@@ -114,6 +118,7 @@ export class SearchService {
 						id: deal.id,
 						label: deal.name,
 						detail: deal.company.name,
+						domain: deal.company.domain,
 						iconUrl: deal.company.iconUrl,
 						iconDarkUrl: deal.company.iconDarkUrl,
 						iconTone: deal.company.iconTone,

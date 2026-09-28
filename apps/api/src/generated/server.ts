@@ -26,12 +26,22 @@ import { enrichmentQueueInput } from "@crm/validation/enrichment-queue";
 import { fieldListInput, fieldListOutput, fieldByKeyInput, serializedFieldOutput, fieldEntityInput, fieldFiltersOutput, fieldIdInput, fieldCoverageOutput, fieldCreateInput, fieldUpdateArgs, fieldReorderInput, fieldReorderOutput, fieldDeleteOutput, fieldBackfillOutput } from "../fields/fields.contracts";
 import { googleConnectionStatusOutput, setAutoCreateInput, suppressDomainInput, suppressDomainOutput, threadInput, emailThreadOutput, calendarEventInput, calendarEventOutput } from "../google/google.contracts";
 import { purgeSyncedDataOutput, revokeAccessOutput, microsoftConnectionStatusOutput, setOutlookAutoCreateInput } from "../microsoft/microsoft.contracts";
+import { demoInfoInput, demoInfoOutput, previewInput, previewOutput, saveInput, saveOutput } from "../leadgen/demo-edit.contracts";
+import { decisionStatusOutput, decideInput, decisionResultOutput, reworkInput } from "../leadgen/lead-decision.contracts";
+import { jobListOutput, jobRunsInput, jobRunsOutput, jobNameInput, jobRunNowOutput, jobSetEnabledInput, okOutput, alertListOutput, marketListOutput, leadsListInput, leadsListOutput, mirrorStatusOutput } from "../leadgen/leadgen.contracts";
+import { campaignListOutput, triageListInput, triageListOutput, reviewListInput, reviewListOutput, leadDetailInput, leadDetailOutput } from "../leadgen/lead-views.contracts";
+import { opsOverviewOutput, opsHealthOutput, opsCallListInput, opsCallListOutput, opsRecentSendsInput, opsRecentSendsOutput } from "../leadgen/ops.contracts";
+import { prewarmInput, prewarmOutput } from "../leadgen/prewarm.contracts";
+import { replyStatusOutput, replyListInput, replyListOutput, replySendInput, replySendOutput, replyDiscardInput, replyDiscardOutput } from "../leadgen/reply-approval.contracts";
+import { shotStatusInput, shotStatusOutput, shotCaptureInput, shotCaptureOutput } from "../leadgen/shot.contracts";
+import { auditCachedInput, auditCachedOutput, auditInput, auditOutput } from "../leadgen/site-audit.contracts";
 import { savedViewListInput, savedViewListOutput, savedViewCreateInput, savedViewOutput, savedViewUpdateArgs, savedViewIdInput, savedViewDeleteOutput } from "../saved-views/saved-views.contracts";
 import { agentModelOutput, modelCatalogOutput, setAgentModelInput, researchKeyOutput, setResearchKeyInput, archiveRetentionOutput, setArchiveRetentionDaysInput } from "../settings/settings.contracts";
 import { slackStatusOutput, slackMatchesOutput, slackChannelsInput, slackChannelsOutput, slackJoinChannelInput, slackJoinChannelOutput, slackRefreshPeopleOutput, slackCreateChannelInput, slackCreateChannelOutput, slackDisconnectOutput } from "../slack/slack.contracts";
 import { ssoSignInOptionsOutput, ssoSettingsOutput, ssoProviderListInput, ssoProviderListOutput, registerSsoProviderInput, ssoProviderOutput, deleteSsoProviderInput, deleteSsoProviderOutput } from "../sso/sso.contracts";
 import { trackingSettingsOutput, trackingFlagInput, cookieLifetimeInput, addDomainInput, trackedDomainOutput, removeDomainInput, rotateSiteIdOutput, verifyInput, verifyOutput, sourcesOutput, companyActivityInput, websiteActivityOutput, contactActivityInput } from "../tracking/tracking.contracts";
 import { workspaceOutput, memberListInput, memberListOutput, updateWorkspaceInput, setMemberRoleInput, workspaceMemberOutput } from "../workspace/workspace.contracts";
+import { zohoConnectionStatusOutput, zohoPurgeSyncedDataOutput, zohoRevokeAccessOutput, setZohoAutoCreateInput } from "../zoho/zoho.contracts";
 import type { UsersRouter } from "../users/users.router";
 
 const appRouter = t.router({
@@ -450,6 +460,7 @@ const appRouter = t.router({
 	kind: z.literal("company"),
 	id: z.string(),
 	name: z.string(),
+	domain: z.string().nullable(),
 	logoUrl: z.string().nullable(),
 	logoDarkUrl: z.string().nullable(),
 	logoTone: z.string().nullable(),
@@ -472,6 +483,7 @@ const appRouter = t.router({
 	kind: z.literal("company"),
 	id: z.string(),
 	name: z.string(),
+	domain: z.string().nullable(),
 	logoUrl: z.string().nullable(),
 	logoDarkUrl: z.string().nullable(),
 	logoTone: z.string().nullable(),
@@ -558,6 +570,135 @@ const appRouter = t.router({
       .output(calendarEventOutput)
       .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
     }),
+  leadgenDemos: t.router({
+    info: publicProcedure
+      .input(demoInfoInput)
+      .output(demoInfoOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    previewLink: publicProcedure
+      .input(previewInput)
+      .output(previewOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    save: publicProcedure
+      .input(saveInput)
+      .output(saveOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
+  leadgenDecisions: t.router({
+    status: publicProcedure
+      .output(decisionStatusOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    decide: publicProcedure
+      .input(decideInput)
+      .output(decisionResultOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    rework: publicProcedure
+      .input(reworkInput)
+      .output(decisionResultOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
+  leadgen: t.router({
+    jobs: publicProcedure
+      .output(jobListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    jobRuns: publicProcedure
+      .input(jobRunsInput)
+      .output(jobRunsOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    jobRunNow: publicProcedure
+      .input(jobNameInput)
+      .output(jobRunNowOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    jobSetEnabled: publicProcedure
+      .input(jobSetEnabledInput)
+      .output(okOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    alerts: publicProcedure
+      .output(alertListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    markets: publicProcedure
+      .output(marketListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    leads: publicProcedure
+      .input(leadsListInput)
+      .output(leadsListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    mirrorStatus: publicProcedure
+      .output(mirrorStatusOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    campaigns: publicProcedure
+      .output(campaignListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    triageList: publicProcedure
+      .input(triageListInput)
+      .output(triageListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    reviewList: publicProcedure
+      .input(reviewListInput)
+      .output(reviewListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    leadDetail: publicProcedure
+      .input(leadDetailInput)
+      .output(leadDetailOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    opsOverview: publicProcedure
+      .output(opsOverviewOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    opsHealth: publicProcedure
+      .output(opsHealthOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    opsCallList: publicProcedure
+      .input(opsCallListInput)
+      .output(opsCallListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    opsRecentSends: publicProcedure
+      .input(opsRecentSendsInput)
+      .output(opsRecentSendsOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
+  leadgenPrewarm: t.router({
+    prepare: publicProcedure
+      .input(prewarmInput)
+      .output(prewarmOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
+  leadgenReplies: t.router({
+    status: publicProcedure
+      .output(replyStatusOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    list: publicProcedure
+      .input(replyListInput)
+      .output(replyListOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    send: publicProcedure
+      .input(replySendInput)
+      .output(replySendOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    discard: publicProcedure
+      .input(replyDiscardInput)
+      .output(replyDiscardOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
+  leadgenShots: t.router({
+    status: publicProcedure
+      .input(shotStatusInput)
+      .output(shotStatusOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    capture: publicProcedure
+      .input(shotCaptureInput)
+      .output(shotCaptureOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
+  leadgenAudit: t.router({
+    cached: publicProcedure
+      .input(auditCachedInput)
+      .output(auditCachedOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    run: publicProcedure
+      .input(auditInput)
+      .output(auditOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
   microsoft: t.router({
     status: publicProcedure
       .output(microsoftConnectionStatusOutput)
@@ -602,6 +743,7 @@ const appRouter = t.router({
 	id: z.string(),
 	label: z.string(),
 	detail: z.string().nullable(),
+	domain: z.string().nullable(),
 	iconUrl: z.string().nullable(),
 	iconDarkUrl: z.string().nullable(),
 	iconTone: z.string().nullable(),
@@ -749,6 +891,24 @@ const appRouter = t.router({
     setMemberRole: publicProcedure
       .input(setMemberRoleInput)
       .output(workspaceMemberOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
+    }),
+  zoho: t.router({
+    status: publicProcedure
+      .output(zohoConnectionStatusOutput)
+      .query(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    purgeSyncedData: publicProcedure
+      .output(zohoPurgeSyncedDataOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    revokeAccess: publicProcedure
+      .output(zohoRevokeAccessOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    syncNow: publicProcedure
+      .output(zohoConnectionStatusOutput)
+      .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any),
+    setAutoCreate: publicProcedure
+      .input(setZohoAutoCreateInput)
+      .output(zohoConnectionStatusOutput)
       .mutation(async () => "PLACEHOLDER_DO_NOT_REMOVE" as any)
     })
 });

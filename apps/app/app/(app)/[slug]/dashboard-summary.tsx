@@ -36,6 +36,7 @@ import { RecordLink } from "@/components/crm/record-sheet/record-link";
 import { useOpenRecord } from "@/components/crm/record-sheet/record-stack";
 import { LocalRelativeTime } from "@/components/local-date-time";
 import { activityLabel } from "@/lib/activity-presentation";
+import { companyLogoDarkSrc, companyLogoSrc } from "@/lib/company-logo";
 import { dealStageColor } from "@/lib/deal-stage";
 import { SEARCH_PARAM } from "@/lib/search-param-keys";
 import { useCrmCache } from "@/lib/trpc/cache";
@@ -334,6 +335,7 @@ function DealCell({
 	name: string;
 	company: {
 		name: string;
+		domain: string | null;
 		iconUrl: string | null;
 		iconDarkUrl: string | null;
 		iconTone: string | null;
@@ -343,8 +345,8 @@ function DealCell({
 	return (
 		<span className="flex min-w-0 items-center gap-2">
 			<EntityLogo
-				src={company.iconUrl}
-				darkSrc={company.iconDarkUrl}
+				src={companyLogoSrc(company)}
+				darkSrc={companyLogoDarkSrc(company)}
 				tone={company.iconTone as EntityLogoTone | null | undefined}
 				name={company.name}
 				size="sm"

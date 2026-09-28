@@ -8,6 +8,7 @@ import { DISPATCH } from "./dispatch-config";
 import { markRunning, settle } from "./enrichment";
 import { collapsing, runLimited } from "./pool";
 import { runPortrait } from "./portrait";
+import { dispatchPauseState } from "./quota-pause";
 import { runSlackChannelJoin } from "./slack-join-task";
 import { runSlackPeopleMatch } from "./slack-people";
 import { staleTaskSweep } from "./stale-tasks";
@@ -320,6 +321,17 @@ export const drainAll = collapsing(
 			lastSweepError =
 				"An abandoned dispatch sweep is still in flight, so this sweep did not start.";
 			console.error(`[agent] ${lastSweepError}`);
+			return;
+		}
+
+		// Card #589: a provider quota/credit/rate-limit exhaustion trips this
+		// breaker (agent/hooks/quota-guard.ts). While tripped, no new tasks are
+		// claimed — due agentTasks stay due (waiting), not failed or retried.
+		// Auto-clears on its own backoff timer, or manually via
+		// resumeDispatchManually() / deleting .eve/quota-pause.json.
+		const pause = await dispatchPauseState();
+		if (pause.paused) {
+			lastSweepError = `Dispatch paused (${pause.code}): ${pause.message}. Auto-resume at ${pause.resumeAt}.`;
 			return;
 		}
 

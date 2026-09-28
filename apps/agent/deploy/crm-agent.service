@@ -1,0 +1,62 @@
+[Unit]
+Description=Comp AI CRM - Eve research agent - EI pilot
+After=network-online.target docker.service crm-api.service
+Wants=network-online.target
+
+# Card #589: the unit used to be Restart=always with no start-limit, so an
+# OOM crash loop retried forever. If it fails this many times within this
+# window, systemd stops retrying and leaves the unit "failed" (visible in
+# `systemctl --user status`) instead of hammering the box indefinitely.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/data/docker/comp-crm/crm/apps/agent
+Environment=PATH=/home/danio/.local/node24/bin:/home/danio/.bun/bin:/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=NITRO_HOST=127.0.0.1
+Environment=AGENT_PORT=2000
+
+# Card #589 (2026-09-27 retune: 2G starved eve start's boot-time compile -- 82k MemoryHigh throttles, never reached :2000): hard memory ceiling for the whole cgroup (heap + everything
+# else the process holds -- streams, buffers, native deps). Below the
+# world-local queue blowing past ~2GB is what triggered the kernel OOM
+# killer against other processes on Joshua; this makes THIS unit the one
+# that gets killed (cleanly, restartable) instead of the box.
+MemoryMax=3584M
+MemoryHigh=3G
+
+# V8 heap cap set comfortably under MemoryMax so V8's own GC pressure
+# kicks in before the cgroup does -- leaves ~500MB of headroom for
+# non-heap RSS (buffers, native addons, thread stacks).
+Environment=NODE_OPTIONS=--max-old-space-size=3072
+
+# Card #589: stop the mass re-delivery of every "active" workflow run on
+# every process start (this is what turned one OOM into a crash loop that
+# re-enqueued the whole .eve/.workflow-data backlog -- 1450 runs in one
+# morning -- every ~10s). Recovery is now a deliberate, manual action, not
+# an automatic side effect of the process starting.
+#   - Re-enable a bounded recovery by temporarily setting
+#     WORKFLOW_LOCAL_RECOVER_ACTIVE_RUNS=1 (or removing the line) once the
+#     backlog has been triaged (see card #589) and quota is confirmed
+#     topped up.
+Environment=WORKFLOW_LOCAL_RECOVER_ACTIVE_RUNS=0
+
+# Card #589: even if recovery is re-enabled, cap how many workflow runs the
+# world-local queue will run at once. Default is 1000; this app's own
+# dispatch layer never runs more than DISPATCH.visible.concurrency (6) at a
+# time, so 8 gives it a little headroom without coming anywhere near the
+# memory footprint that caused the OOM.
+Environment=WORKFLOW_LOCAL_QUEUE_CONCURRENCY=8
+
+ExecStart=/home/danio/.bun/bin/bun run start
+
+# Card #589: on-failure (not always) so a clean stop/disable is respected,
+# combined with the StartLimit above so a persistent failure (e.g. still
+# out of quota) surfaces as a failed unit instead of looping forever.
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target

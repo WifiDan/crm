@@ -12,19 +12,38 @@ export function decodeBase64Url(data: string): string {
 	}
 }
 
-export function stripHtml(html: string): string {
-	return html
-		.replace(/<style[\s\S]*?<\/style>/gi, "")
-		.replace(/<script[\s\S]*?<\/script>/gi, "")
-		.replace(/<br\s*\/?>/gi, "\n")
-		.replace(/<\/(p|div|tr|li|h[1-6])>/gi, "\n")
-		.replace(/<[^>]+>/g, "")
+/**
+ * Undo HTML entity escaping.
+ *
+ * Zoho's message list returns `toAddress`, `ccAddress`, `sender` and `subject`
+ * HTML-escaped — a real recipient arrives as `&lt;someone@example.com&gt;`.
+ * Left as-is the address parser reads the entities as part of the domain,
+ * every recipient is discarded, and no outbound Zoho mail can ever be filed
+ * against a company. Decoding is a parsing step here, not cosmetics.
+ *
+ * `&amp;` is decoded last so that a doubly-escaped entity (`&amp;lt;`) ends up
+ * as the literal text `&lt;` rather than turning into a bracket.
+ */
+export function decodeEntities(value: string): string {
+	return value
 		.replace(/&nbsp;/g, " ")
-		.replace(/&amp;/g, "&")
 		.replace(/&lt;/g, "<")
 		.replace(/&gt;/g, ">")
 		.replace(/&quot;/g, '"')
-		.replace(/&#39;/g, "'")
+		.replace(/&#0*39;/g, "'")
+		.replace(/&apos;/g, "'")
+		.replace(/&amp;/g, "&");
+}
+
+export function stripHtml(html: string): string {
+	return decodeEntities(
+		html
+			.replace(/<style[\s\S]*?<\/style>/gi, "")
+			.replace(/<script[\s\S]*?<\/script>/gi, "")
+			.replace(/<br\s*\/?>/gi, "\n")
+			.replace(/<\/(p|div|tr|li|h[1-6])>/gi, "\n")
+			.replace(/<[^>]+>/g, ""),
+	)
 		.replace(/\n{3,}/g, "\n\n")
 		.trim();
 }

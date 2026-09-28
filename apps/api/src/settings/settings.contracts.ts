@@ -18,6 +18,11 @@ export const agentModelOutput = z.object({
 	selectedId: z.string().nullable(),
 	effectiveId: z.string(),
 	defaultId: z.string(),
+	/**
+	 * How the effective model is actually reached. The default is called
+	 * straight at Anthropic; anything chosen here goes via the AI Gateway.
+	 */
+	routing: z.enum(["direct", "gateway"]),
 	effective: catalogModelOutput.nullable(),
 	updatedAt: z.string().nullable(),
 });

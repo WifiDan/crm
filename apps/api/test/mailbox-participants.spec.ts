@@ -315,3 +315,52 @@ describe("isDerivedName", () => {
 		expect(isDerivedName("jane.doe@acme.com", "Jane", "Doherty")).toBe(false);
 	});
 });
+
+describe("an address the CRM already holds", () => {
+	const context = (knownAddresses?: Set<string>) => ({
+		ourDomains: new Set(["trycomp.ai"]),
+		ourAddresses: new Set(["rep@trycomp.ai"]),
+		suppressedDomains: new Set<string>(),
+		suppressedEmails: new Set<string>(),
+		...(knownAddresses ? { knownAddresses } : {}),
+	});
+
+	const people = [
+		{ email: "realfit413@gmail.com", name: "Real Life Fitness" },
+		{ email: "info@kingsfitnessforlife.com", name: null },
+	];
+
+	it("is dropped when it is a stranger on a free provider or a role box", () => {
+		expect(externalParticipants(people, context())).toEqual([]);
+	});
+
+	it("survives once it is recorded on a contact or a company", () => {
+		const known = new Set([
+			"realfit413@gmail.com",
+			"info@kingsfitnessforlife.com",
+		]);
+
+		expect(
+			externalParticipants(people, context(known)).map(
+				(person) => person.email,
+			),
+		).toEqual(["realfit413@gmail.com", "info@kingsfitnessforlife.com"]);
+	});
+
+	it("is still dropped when it has been suppressed", () => {
+		const options = {
+			...context(new Set(["realfit413@gmail.com"])),
+			suppressedEmails: new Set(["realfit413@gmail.com"]),
+		};
+
+		expect(externalParticipants(people, options)).toEqual([]);
+	});
+
+	it("never overrides our own address", () => {
+		const options = context(new Set(["rep@trycomp.ai"]));
+
+		expect(
+			externalParticipants([{ email: "rep@trycomp.ai", name: "Rep" }], options),
+		).toEqual([]);
+	});
+});

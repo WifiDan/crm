@@ -26,6 +26,7 @@ import { SavedViewsMenu } from "@/components/data-table/saved-views-menu";
 import { useTableQuery } from "@/components/data-table/use-table-query";
 import { LocalRelativeTime } from "@/components/local-date-time";
 import { ACTIVITY_FACET_OPTIONS } from "@/lib/activity-recency";
+import { companyLogoDarkSrc, companyLogoSrc } from "@/lib/company-logo";
 import {
 	ENRICHMENT_FACET_OPTIONS,
 	ENRICHMENT_POLL_MS,
@@ -48,8 +49,8 @@ const COLUMNS: DataTableColumn<CompanyRow>[] = [
 		cell: (row) => (
 			<span className="flex min-w-0 items-center gap-2.5">
 				<EntityLogo
-					src={row.iconUrl ?? row.logoUrl}
-					darkSrc={row.iconDarkUrl}
+					src={companyLogoSrc(row)}
+					darkSrc={companyLogoDarkSrc(row)}
 					tone={row.iconTone as EntityLogoTone | null | undefined}
 					name={row.name}
 					size="sm"

@@ -29,6 +29,7 @@ import {
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useOpenRecord } from "@/components/crm/record-sheet/record-stack";
+import { companyLogoDarkSrc, companyLogoSrc } from "@/lib/company-logo";
 import { elapsedLabel, queueFooter } from "@/lib/enrichment-queue";
 import {
 	ENRICHMENT_IDLE_POLL_MS,
@@ -260,8 +261,14 @@ function SubjectFace({ subject }: { subject: QueueSubject }) {
 
 	return (
 		<EntityLogo
-			src={subject.logoUrl}
-			darkSrc={subject.logoDarkUrl}
+			src={companyLogoSrc({
+				logoUrl: subject.logoUrl,
+				domain: subject.domain,
+			})}
+			darkSrc={companyLogoDarkSrc({
+				logoDarkUrl: subject.logoDarkUrl,
+				domain: subject.domain,
+			})}
 			tone={entityTone(subject.logoTone)}
 			name={subject.name}
 		/>

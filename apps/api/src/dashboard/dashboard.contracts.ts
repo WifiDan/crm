@@ -24,6 +24,7 @@ const ownerOutput = z.object({
 const companyBriefOutput = z.object({
 	id: z.string(),
 	name: z.string(),
+	domain: z.string().nullable(),
 	iconUrl: z.string().nullable(),
 	iconDarkUrl: z.string().nullable(),
 	iconTone: z.string().nullable(),

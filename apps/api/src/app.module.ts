@@ -22,6 +22,7 @@ import { EnrichmentModule } from "./enrichment/enrichment.module";
 import { FieldsModule } from "./fields/fields.module";
 import { GoogleModule } from "./google/google.module";
 import { HealthModule } from "./health/health.module";
+import { LeadgenModule } from "./leadgen/leadgen.module";
 import { LoggingModule } from "./logging/logging.module";
 import { logAuthRoute } from "./logging/request-logger.middleware";
 import { MailboxModule } from "./mailbox/mailbox.module";
@@ -37,6 +38,7 @@ import { TrackingModule } from "./tracking/tracking.module";
 import { TrpcModule } from "./trpc/trpc.module";
 import { UsersModule } from "./users/users.module";
 import { WorkspaceModule } from "./workspace/workspace.module";
+import { ZohoModule } from "./zoho/zoho.module";
 
 @Module({
 	imports: [
@@ -69,6 +71,7 @@ import { WorkspaceModule } from "./workspace/workspace.module";
 		MailboxModule,
 		GoogleModule,
 		MicrosoftModule,
+		ZohoModule,
 		SyncModule,
 		SettingsModule,
 		WorkspaceModule,
@@ -79,6 +82,7 @@ import { WorkspaceModule } from "./workspace/workspace.module";
 		TrackingModule,
 		ArchiveModule,
 		SavedViewsModule,
+		LeadgenModule,
 	],
 })
 export class AppModule {}
